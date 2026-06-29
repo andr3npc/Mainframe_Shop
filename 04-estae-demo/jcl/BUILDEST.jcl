@@ -1,0 +1,31 @@
+//ESTBUILD JOB AMS-CLEAN,
+//             ANDRE,
+//             NOTIFY=ANDRE,CLASS=A,
+//             MSGLEVEL=(1,1)
+//*------------------------------------------------------------------*
+//*  ASSEMBLE + LINK  ESTDEMO  (ESTAE recovery demo)                 *
+//*  Module loads AMODE 31 / RMODE ANY - no DCB, so no RMODE 24      *
+//*  requirement (unlike artifacts 3 and 5).                         *
+//*------------------------------------------------------------------*
+//ASM     EXEC PGM=ASMA90,REGION=0M,
+//    PARM=('LINECOUNT(111),USING(WARN(11)),XREF(SHORT),DECK')
+//SYSIN    DD  DSN=ANDRE.EPE.ASM(ESTDEMO),DISP=SHR
+//SYSPUNCH DD  DSN=ANDRE.EPE.OBJ(ESTDEMO),DISP=SHR
+//SYSLIN   DD  DUMMY
+//SYSPRINT DD  DSN=ANDRE.EPE.LISTCASM(ESTDEMO),DISP=SHR
+//SYSUT1   DD  UNIT=SYSDA,SPACE=(CYL,(5,5))
+//SYSLIB   DD  DSN=ANDRE.EPE.MACLIB,DISP=SHR
+//         DD  DSN=SYS1.MACLIB,DISP=SHR
+//         DD  DSN=SYS1.MODGEN,DISP=SHR
+//LINK    EXEC PGM=IEWL,COND=(4,LE,ASM),
+//   PARM='XREF,LIST,LET,NCAL,SIZE=(512K,196K),AC=0'
+//SYSUT1   DD  UNIT=SYSDA,SPACE=(CYL,(10,10))
+//OBJDS    DD  DSN=ANDRE.EPE.OBJ,DISP=SHR
+//SYSPRINT DD  DSN=ANDRE.EPE.LISTLNK(ESTDEMO),DISP=SHR
+//SYSLMOD  DD  DSN=ANDRE.EPE.LOAD,DISP=SHR
+//SYSLIN   DD  *
+  MODE AMODE(31),RMODE(ANY)
+  INCLUDE OBJDS(ESTDEMO)
+  ENTRY ESTDEMO
+  NAME ESTDEMO(R)
+/*

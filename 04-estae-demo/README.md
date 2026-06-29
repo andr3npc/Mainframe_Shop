@@ -33,10 +33,46 @@ with deep dump/listing debugging skills — by causing a controlled failure
 - Formatting diagnostic fields for a readable report.
 - Standard OS linkage; reentrancy considerations in the recovery path.
 
+## Files
+
+| File | What it is |
+|------|------------|
+| `src/ESTDEMO.asm` | The program — one CSECT, `AMODE 31 / RMODE ANY`. |
+| `jcl/BUILDEST.jcl` | Assemble (`ASMA90`) + bind (`IEWL`) into the load library. |
+| `jcl/RUNEST.jcl` | Run both variants: `PARM=RETRY` then `PARM=PERC`. |
+| `docs/DESIGN.md` | Full design, register/SDWA notes, edge cases. |
+
+## How the variant is selected
+
+A single program, chosen at run time by the EXEC `PARM`:
+
+| `PARM` | Behaviour | Step result |
+|--------|-----------|-------------|
+| `RETRY` (or blank) | recover → resume past the error | **RC 0** |
+| `PERC` | recover → let the abend stand | **abends S0C7** |
+
+In both cases the recovery routine first WTOs the abend completion code
+(`SDWAABCC`), the PSW at the error (`SDWAEC1`), and GPRs 14–15 at the time
+of error (`SDWAGRSV`) to JESMSGLG (`ROUTCDE=(11)`).
+
+**Status: built and verified on a real z/OS system** — assembles and links
+clean (`ASMA90`/`IEWL` RC 0); the RETRY step ends `COND CODE 0000` and the
+PERC step ends `ABEND=S0C7`. See [docs/DESIGN.md](docs/DESIGN.md) for the
+captured job log and the debugging lessons.
+
 ## Build instructions
 
-_Placeholder — to be filled in when the program and JCL are written._
-The plan: assemble against IBM macro libraries, link-edit to a load
-library, and run a step that abends and is recovered; SYSOUT shows the
-formatted SDWA report. Expect a non-zero (or zero, for RETRY) step
-completion depending on the variant.
+1. Upload `src/ESTDEMO.asm` as member `ESTDEMO` in your source PDS and the
+   two JCL members into a JCL PDS (the supplied JCL uses `ANDRE.EPE.*` —
+   retarget the dataset names to your environment).
+2. Submit `jcl/BUILDEST.jcl` — assembles against `ANDRE.EPE.MACLIB`
+   (`@ENTER`/`@LEAVE`/`@HEXOUT`) + `SYS1.MACLIB` + `SYS1.MODGEN`
+   (`ESTAEX`/`SETRP`/`WTO`/`IHASDWA`) and binds `AMODE 31 / RMODE ANY`
+   into the load library.
+3. Submit `jcl/RUNEST.jcl`. Expect STEP1 (`RETRY`) to end **RC 0** and
+   STEP2 (`PERC`) to **abend S0C7**; both leave the formatted SDWA
+   diagnostics in the job log.
+
+> No DCB is involved, so this module is free to load above the 16M line
+> (`RMODE ANY`) — unlike the QSAM artifacts (3, 5) which force `RMODE 24`
+> so OPEN's 24-bit parameter address resolves.

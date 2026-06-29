@@ -61,7 +61,7 @@ multiple sessions, one artifact at a time.
 | 1 | Personal Macro Library| Complete    |
 | 2 | Control Block Walker  | Complete    |
 | 3 | JES2 SYSOUT Scraper   | Complete    |
-| 4 | ESTAE Recovery Demo   | Not started |
+| 4 | ESTAE Recovery Demo   | Complete    |
 | 5 | SMF Type-30 Reporter  | Complete    |
 
 Status values: Not started / In progress / Complete.
