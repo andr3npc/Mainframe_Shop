@@ -11,6 +11,10 @@ Everything here is written to z/OS conventions (AMODE 31 / RMODE ANY,
 standard OS linkage, IBM-supplied DSECTs and macros) and is meant to be
 read like production code in a code review, not just to run.
 
+For a walkthrough of what each artifact demonstrates — the concepts, the
+deep technical points, and the debugging war stories behind them — see
+[TALKING-POINTS.md](TALKING-POINTS.md).
+
 ## What's inside
 
 | # | Artifact | What it demonstrates |
