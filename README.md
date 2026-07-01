@@ -1,5 +1,7 @@
 # z/OS HLASM Systems Programming Portfolio
 
+**[GitHub @andr3npc](https://github.com/andr3npc)** &nbsp;·&nbsp; [Talking points](TALKING-POINTS.md) &nbsp;·&nbsp; [Production notes](PRODUCTION-NOTES.md) &nbsp;·&nbsp; [What's inside](#whats-inside)
+
 A collection of IBM z/OS High Level Assembler (HLASM) artifacts that
 demonstrate practical mainframe systems programming: macro engineering,
 control block navigation, dynamic allocation against JES2, recovery
