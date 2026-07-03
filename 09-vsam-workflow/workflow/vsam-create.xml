@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  z/OSMF Workflow: Create a VSAM KSDS cluster
+  Modeled on the template-based structure of adduser.sandbox.xml in
+  /global/zosmf/ZOS31/data/workflows: the DEFINE CLUSTER JCL lives in a
+  separate template file (vsam-define.template) referenced via
+  fileTemplate. Steps:
+    1. define-ksds  - JCL from /z/andre/vsam-define.template (IDCAMS DEFINE)
+    2. verify-ksds  - TSO-REXX LISTCAT to confirm the cluster exists
+    3. delete-ksds  - optional inline JCL to delete the cluster (cleanup)
+  All instance variables must be referenced as ${instance-NAME}.
+-->
+<workflow>
+    <workflowInfo>
+        <workflowID scope="none">vsam-create</workflowID>
+        <workflowDescription>Create a VSAM KSDS cluster with IDCAMS and verify it with LISTCAT</workflowDescription>
+        <workflowVersion>1.0</workflowVersion>
+        <vendor>Andre</vendor>
+        <Configuration>
+            <productID>z/OS</productID>
+            <productName>z/OS</productName>
+            <productVersion>V2R4</productVersion>
+        </Configuration>
+    </workflowInfo>
+
+    <!-- Variable Definitions -->
+    <variable name="VSAM_DSN" scope="instance">
+        <label>VSAM Cluster Name</label>
+        <abstract>Fully qualified name of the KSDS cluster to create</abstract>
+        <description>Fully qualified cluster name, e.g. ANDRE.EPE.KSDS1. Keep it under the ANDRE high level qualifier. Maximum 38 characters so the .DATA and .INDEX component names still fit in 44.</description>
+        <category>Cluster</category>
+        <string>
+            <minLength>1</minLength>
+            <maxLength>38</maxLength>
+            <default>ANDRE.EPE.KSDS1</default>
+        </string>
+    </variable>
+
+    <variable name="KEY_LENGTH" scope="instance">
+        <label>Key Length</label>
+        <abstract>Length of the KSDS key in bytes</abstract>
+        <description>Length in bytes of the primary key field (KEYS length value)</description>
+        <category>Cluster</category>
+        <integer>
+            <minValue>1</minValue>
+            <maxValue>255</maxValue>
+            <default>8</default>
+        </integer>
+    </variable>
+
+    <variable name="KEY_OFFSET" scope="instance">
+        <label>Key Offset</label>
+        <abstract>Offset of the key within the record</abstract>
+        <description>Zero-based offset in bytes of the key within each record (KEYS offset value)</description>
+        <category>Cluster</category>
+        <integer>
+            <minValue>0</minValue>
+            <default>0</default>
+        </integer>
+    </variable>
+
+    <variable name="AVG_RECLEN" scope="instance">
+        <label>Average Record Length</label>
+        <abstract>Average record size in bytes</abstract>
+        <description>Average record length (first RECORDSIZE value)</description>
+        <category>Cluster</category>
+        <integer>
+            <minValue>1</minValue>
+            <default>80</default>
+        </integer>
+    </variable>
+
+    <variable name="MAX_RECLEN" scope="instance">
+        <label>Maximum Record Length</label>
+        <abstract>Maximum record size in bytes</abstract>
+        <description>Maximum record length (second RECORDSIZE value). Must be greater than or equal to the average, and greater than key offset plus key length.</description>
+        <category>Cluster</category>
+        <integer>
+            <minValue>1</minValue>
+            <default>80</default>
+        </integer>
+    </variable>
+
+    <variable name="PRIMARY_CYL" scope="instance">
+        <label>Primary Space (cylinders)</label>
+        <abstract>Primary allocation in cylinders</abstract>
+        <description>Primary space allocation in cylinders (first CYL value)</description>
+        <category>Space</category>
+        <integer>
+            <minValue>1</minValue>
+            <default>1</default>
+        </integer>
+    </variable>
+
+    <variable name="SECONDARY_CYL" scope="instance">
+        <label>Secondary Space (cylinders)</label>
+        <abstract>Secondary allocation in cylinders</abstract>
+        <description>Secondary space allocation in cylinders (second CYL value)</description>
+        <category>Space</category>
+        <integer>
+            <minValue>0</minValue>
+            <default>1</default>
+        </integer>
+    </variable>
+
+    <!-- Step 1: IDCAMS DEFINE CLUSTER from template file -->
+    <step name="define-ksds" optional="false">
+        <title>Define the VSAM KSDS cluster</title>
+        <description>
+            Submits an IDCAMS job built from the file template
+            /z/andre/vsam-define.template. The job runs DEFINE CLUSTER with
+            INDEXED, KEYS, RECORDSIZE, CYL, SHAREOPTIONS(2 3) and
+            FREESPACE(10 10), naming the DATA and INDEX components
+            explicitly.
+        </description>
+        <instructions substitution="true">
+            This step submits an IDCAMS DEFINE CLUSTER job for
+            ${instance-VSAM_DSN} with KEYS(${instance-KEY_LENGTH} ${instance-KEY_OFFSET}),
+            RECORDSIZE(${instance-AVG_RECLEN} ${instance-MAX_RECLEN}) and
+            CYL(${instance-PRIMARY_CYL} ${instance-SECONDARY_CYL}).
+            Success is judged by the job return code (RC 0).
+        </instructions>
+        <weight>3</weight>
+        <skills>VSAM, IDCAMS, JCL</skills>
+        <autoEnable>true</autoEnable>
+        <canMarkAsFailed>false</canMarkAsFailed>
+        <template>
+            <fileTemplate substitution="true">/z/andre/vsam-define.template</fileTemplate>
+            <submitAs>JCL</submitAs>
+            <maxLrecl>80</maxLrecl>
+        </template>
+    </step>
+
+    <!-- Step 2: Verify with LISTCAT (TSO-REXX) -->
+    <step name="verify-ksds" optional="false">
+        <title>Verify the cluster with LISTCAT</title>
+        <description>
+            Runs a TSO REXX exec that issues LISTCAT for the new cluster and
+            prints a success sentinel when LISTCAT returns zero.
+        </description>
+        <instructions substitution="true">
+            This step runs LISTCAT ENTRIES for ${instance-VSAM_DSN} in a TSO
+            address space. The step succeeds when the output contains
+            VSAM_VERIFY_SUCCESS.
+        </instructions>
+        <weight>1</weight>
+        <skills>VSAM, TSO, REXX</skills>
+        <autoEnable>true</autoEnable>
+        <canMarkAsFailed>false</canMarkAsFailed>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[/* REXX */
+SAY 'Verifying VSAM cluster ${instance-VSAM_DSN}'
+"LISTCAT ENTRIES('${instance-VSAM_DSN}') CLUSTER"
+IF rc = 0 THEN DO
+  SAY 'VSAM_VERIFY_SUCCESS'
+END
+ELSE DO
+  SAY 'VSAM verify failed, LISTCAT rc='rc
+END
+EXIT 0]]></inlineTemplate>
+            <submitAs>TSO-REXX</submitAs>
+            <successPattern>VSAM_VERIFY_SUCCESS</successPattern>
+        </template>
+    </step>
+
+    <!-- Step 3 (optional): Delete the cluster -->
+    <step name="delete-ksds" optional="true">
+        <title>Delete the cluster (optional cleanup)</title>
+        <description>
+            Optional cleanup step. Submits an IDCAMS job that deletes the
+            cluster created by step 1. Perform this step only when you want
+            to remove the dataset again.
+        </description>
+        <instructions substitution="true">
+            This step deletes ${instance-VSAM_DSN} with IDCAMS DELETE PURGE.
+            Skip it if you want to keep the cluster.
+        </instructions>
+        <weight>1</weight>
+        <skills>VSAM, IDCAMS, JCL</skills>
+        <autoEnable>true</autoEnable>
+        <canMarkAsFailed>false</canMarkAsFailed>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[//ANDREVD  JOB AMS-CLEAN,
+//             ANDRE,
+//             NOTIFY=ANDRE,CLASS=A,
+//             MSGLEVEL=(1,1)
+//DELKSDS  EXEC PGM=IDCAMS
+//SYSPRINT DD SYSOUT=*
+//SYSIN    DD *
+  DELETE ${instance-VSAM_DSN} CLUSTER PURGE
+/*]]></inlineTemplate>
+            <submitAs>JCL</submitAs>
+            <maxLrecl>80</maxLrecl>
+        </template>
+    </step>
+</workflow>

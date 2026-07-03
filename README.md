@@ -31,6 +31,7 @@ real system, see [PRODUCTION-NOTES.md](PRODUCTION-NOTES.md).
 | 6 | [IPCS Dump Practice](06-ipcs-dump-practice/) | Dump analysis — `DUMPPGM` builds eye-catcher'd structures and pointer chains, then forces a U0013 dump to analyse with IPCS (`FIND`, `LISTDUMP`, `WHERE`, `CBFORMAT`). |
 | 7 | [Ansible Automation](07-ansible-automation/) | DevOps on z/OS — an Ansible playbook drives a HLASM assemble/link through the z/OSMF REST API (submit, poll, fetch output, gate on return code). |
 | 8 | [Feature-Flag Routing](08-feature-flag-routing/) | Progressive delivery — `FEATFLAG` selects a LEGACY or NEW path in one load module from the EXEC `PARM`, with no relink to switch. |
+| 9 | [z/OSMF VSAM Workflow](09-vsam-workflow/) | Modern z/OS provisioning — a z/OSMF workflow that creates a VSAM KSDS from variable-driven IDCAMS `DEFINE CLUSTER` (fileTemplate JCL), verifies it with TSO-REXX `LISTCAT`, and optionally deletes it; includes the REPRO initial-load JCL. |
 
 ## Repository layout
 
@@ -46,6 +47,7 @@ mainframe-portfolio/
   06-ipcs-dump-practice/ src/ jcl/ docs/ README.md
   07-ansible-automation/ playbooks/ jcl/ scripts/ docs/ README.md
   08-feature-flag-routing/ src/ jcl/ docs/ README.md
+  09-vsam-workflow/      workflow/ jcl/ docs/ README.md
 ```
 
 ### A note on file extensions

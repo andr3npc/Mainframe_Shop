@@ -1,0 +1,22 @@
+//ANDREVS  JOB AMS-CLEAN,
+//             ANDRE,
+//             NOTIFY=ANDRE,CLASS=A,
+//             MSGLEVEL=(1,1)
+//*------------------------------------------------------------------
+//* Define a VSAM KSDS cluster - values supplied by z/OSMF workflow
+//* variable substitution (vsam-create workflow).
+//*------------------------------------------------------------------
+//DEFKSDS  EXEC PGM=IDCAMS
+//SYSPRINT DD SYSOUT=*
+//SYSIN    DD *
+  DEFINE CLUSTER( -
+    NAME(${instance-VSAM_DSN}) -
+    INDEXED -
+    KEYS(${instance-KEY_LENGTH} ${instance-KEY_OFFSET}) -
+    RECORDSIZE(${instance-AVG_RECLEN} ${instance-MAX_RECLEN}) -
+    CYL(${instance-PRIMARY_CYL} ${instance-SECONDARY_CYL}) -
+    SHAREOPTIONS(2 3) -
+    FREESPACE(10 10)) -
+  DATA(NAME(${instance-VSAM_DSN}.DATA)) -
+  INDEX(NAME(${instance-VSAM_DSN}.INDEX))
+/*

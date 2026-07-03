@@ -18,7 +18,7 @@ multiple sessions, one artifact at a time.
   to produce correct source, JCL, and documentation that the author takes
   to the mainframe to build and run.
 
-## Portfolio scope — 8 artifacts
+## Portfolio scope — 9 artifacts
 
 1. **Personal Macro Library** (`01-macro-library/`)
    Curated structured-programming and utility macros: `@ENTER`/`@LEAVE`,
@@ -72,6 +72,14 @@ multiple sessions, one artifact at a time.
    Showcases: parm-driven routing / progressive delivery, register-1
    lifetime discipline (the rehabilitated, de-DB2'd `FLAGDB2`).
 
+9. **z/OSMF VSAM Workflow** (`09-vsam-workflow/`)
+   A z/OSMF workflow that provisions a VSAM KSDS: variable-driven
+   IDCAMS DEFINE CLUSTER from a fileTemplate, TSO-REXX LISTCAT verify
+   with successPattern, optional DELETE cleanup; plus REPRO load JCL.
+   Showcases: z/OSMF workflow schema, template substitution, VSAM
+   geometry, ASCII/EBCDIC encoding discipline. Verified on ZOS31
+   (cluster created by the workflow, 10 records loaded, CC 0000).
+
 ## Status
 
 | # | Artifact              | Status      |
@@ -84,6 +92,7 @@ multiple sessions, one artifact at a time.
 | 6 | IPCS Dump Practice    | Complete    |
 | 7 | Ansible Automation    | Complete    |
 | 8 | Feature-Flag Routing  | Complete    |
+| 9 | z/OSMF VSAM Workflow  | Complete    |
 
 Status values: Not started / In progress / Complete.
 
