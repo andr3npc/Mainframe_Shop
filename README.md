@@ -32,6 +32,7 @@ real system, see [PRODUCTION-NOTES.md](PRODUCTION-NOTES.md).
 | 7 | [Ansible Automation](07-ansible-automation/) | DevOps on z/OS — an Ansible playbook drives a HLASM assemble/link through the z/OSMF REST API (submit, poll, fetch output, gate on return code). |
 | 8 | [Feature-Flag Routing](08-feature-flag-routing/) | Progressive delivery — `FEATFLAG` selects a LEGACY or NEW path in one load module from the EXEC `PARM`, with no relink to switch. |
 | 9 | [z/OSMF VSAM Workflow](09-vsam-workflow/) | Modern z/OS provisioning — a z/OSMF workflow that creates a VSAM KSDS from variable-driven IDCAMS `DEFINE CLUSTER` (fileTemplate JCL), verifies it with TSO-REXX `LISTCAT`, and optionally deletes it; includes the REPRO initial-load JCL. |
+| 10 | [z/OSMF Liberty Dump Workflow](10-liberty-dump-workflow/) | Server diagnostics as automation — a z/OSMF workflow of shell-JCL steps that verifies the Liberty install, triggers a javadump of the z/OSMF server via an MVS modify command (`F IZUSVR1,JAVADUMP`), and proves the dump archive landed on disk (verify → act → verify). |
 
 ## Repository layout
 
@@ -48,6 +49,7 @@ mainframe-portfolio/
   07-ansible-automation/ playbooks/ jcl/ scripts/ docs/ README.md
   08-feature-flag-routing/ src/ jcl/ docs/ README.md
   09-vsam-workflow/      workflow/ jcl/ docs/ README.md
+  10-liberty-dump-workflow/ workflow/ docs/ README.md
 ```
 
 ### A note on file extensions

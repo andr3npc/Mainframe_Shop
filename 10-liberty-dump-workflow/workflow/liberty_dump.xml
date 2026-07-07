@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="workflow_v1.xsd">
+
+    <workflowInfo>
+        <workflowID>liberty-server-dump</workflowID>
+        <workflowDefaultName>Liberty Server Dump</workflowDefaultName>
+        <workflowDescription>Generates a Liberty server dump for z/OSMF diagnostics</workflowDescription>
+        <workflowVersion>1.0</workflowVersion>
+        <vendor>IBM</vendor>
+    </workflowInfo>
+
+    <variable name="WLP_USER_DIR" scope="instance" visibility="public">
+        <label>WLP User Directory</label>
+        <abstract>Liberty user directory containing server configuration</abstract>
+        <description>The WLP_USER_DIR path for z/OSMF Liberty server</description>
+        <category>Liberty</category>
+        <string>
+            <default>/global/zosmf/ZOS31/configuration</default>
+        </string>
+    </variable>
+
+    <variable name="WLP_BIN" scope="instance" visibility="public">
+        <label>Liberty Binary Path</label>
+        <abstract>Path to the Liberty wlp/bin directory</abstract>
+        <description>Full path to the Liberty server binary</description>
+        <category>Liberty</category>
+        <string>
+            <default>/usr/lpp/zosmf/liberty/bin</default>
+        </string>
+    </variable>
+
+    <variable name="DUMP_ARCHIVE" scope="instance" visibility="public">
+        <label>Dump Archive Path</label>
+        <abstract>Full path for the output dump zip file</abstract>
+        <description>Where the dump zip file will be written</description>
+        <category>Liberty</category>
+        <string>
+            <default>/z/andre/zosmf_dump.zip</default>
+        </string>
+    </variable>
+
+    <variable name="DUMP_INCLUDE" scope="instance" visibility="public">
+        <label>Dump Include Types</label>
+        <abstract>Types of dumps to include</abstract>
+        <description>Comma separated: thread, heap, system</description>
+        <category>Liberty</category>
+        <string>
+            <default>thread,heap</default>
+        </string>
+    </variable>
+
+    <step name="verifyLiberty">
+        <title>Verify Liberty Installation</title>
+        <description>Confirms the Liberty server binary exists before attempting to generate the dump</description>
+        <instructions substitution="true">
+            Verify that the Liberty binary exists at: ${instance-WLP_BIN}/server
+        </instructions>
+        <weight>1</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true">
+#!/bin/sh
+ls -l ${instance-WLP_BIN}/server
+if [ $? -eq 0 ]; then
+  echo "Liberty binary found at ${instance-WLP_BIN}/server"
+else
+  echo "ERROR: Liberty binary not found at ${instance-WLP_BIN}/server"
+  exit 1
+fi
+            </inlineTemplate>
+            <submitAs>shell-JCL</submitAs>
+            <maxLrecl>1024</maxLrecl>
+        </template>
+    </step>
+
+    <step name="generateDump">
+        <title>Generate Liberty Server Dump</title>
+        <description>Runs the Liberty server dump command to capture diagnostics</description>
+        <prereqStep name="verifyLiberty"/>
+        <instructions substitution="true">
+            Generates a Liberty server dump for zosmfServer.
+            Output will be written to: ${instance-DUMP_ARCHIVE}
+            Dump types included: ${instance-DUMP_INCLUDE}
+        </instructions>
+        <weight>10</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true">
+#!/bin/sh
+echo "Triggering Liberty javadump via operator command..."
+echo "Include : ${instance-DUMP_INCLUDE}"
+echo "-----------------------------------"
+
+/usr/sbin/operator "F IZUSVR1,JAVADUMP"
+RC=$?
+
+echo "-----------------------------------"
+echo "Operator command issued. RC=$RC"
+echo "Dump files will appear in: /global/zosmf/ZOS31/data/logs/zosmfServer"
+ls -lht /global/zosmf/ZOS31/data/logs/zosmfServer | head -5
+            </inlineTemplate>
+            <submitAs>shell-JCL</submitAs>
+            <maxLrecl>1024</maxLrecl>
+        </template>
+    </step>
+
+    <step name="verifyDump">
+        <title>Verify Dump Output</title>
+        <description>Confirms the dump file was created successfully</description>
+        <prereqStep name="generateDump"/>
+        <instructions substitution="true">
+            Verify the dump archive was created at: ${instance-DUMP_ARCHIVE}
+        </instructions>
+        <weight>1</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true">
+#!/bin/sh
+DUMP_DIR=/global/zosmf/ZOS31/data/logs/zosmfServer
+echo "Verifying dump output in $DUMP_DIR ..."
+ls -lt $DUMP_DIR | head -5
+
+LATEST=$(ls -t $DUMP_DIR/zosmfServer.dump-*.zip 2>/dev/null | head -1)
+if [ -n "$LATEST" ]; then
+  echo "SUCCESS: Latest dump file found:"
+  ls -l $LATEST
+else
+  echo "ERROR: No dump zip found in $DUMP_DIR"
+  exit 1
+fi
+            </inlineTemplate>
+            <submitAs>shell-JCL</submitAs>
+            <maxLrecl>1024</maxLrecl>
+        </template>
+    </step>
+
+</workflow>

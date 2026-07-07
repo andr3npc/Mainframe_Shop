@@ -18,7 +18,7 @@ multiple sessions, one artifact at a time.
   to produce correct source, JCL, and documentation that the author takes
   to the mainframe to build and run.
 
-## Portfolio scope — 9 artifacts
+## Portfolio scope — 10 artifacts
 
 1. **Personal Macro Library** (`01-macro-library/`)
    Curated structured-programming and utility macros: `@ENTER`/`@LEAVE`,
@@ -80,6 +80,16 @@ multiple sessions, one artifact at a time.
    geometry, ASCII/EBCDIC encoding discipline. Verified on ZOS31
    (cluster created by the workflow, 10 records loaded, CC 0000).
 
+10. **z/OSMF Liberty Dump Workflow** (`10-liberty-dump-workflow/`)
+    A z/OSMF workflow of three shell-JCL steps (verify → act → verify)
+    that checks the Liberty install, triggers a javadump of the z/OSMF
+    server via `/usr/sbin/operator "F IZUSVR1,JAVADUMP"`, and fails
+    unless the dump archive actually appears in the Liberty log dir.
+    Showcases: shell-JCL step type (BPXBATCH wrap, judged by RC, no
+    successPattern), prereqStep chaining, operator commands from USS.
+    Verified on ZOS31 (JOB05976–78 all Complete; 19.5 MB
+    zosmfServer.dump-26.07.07_14.48.14.zip found by the verify step).
+
 ## Status
 
 | # | Artifact              | Status      |
@@ -93,6 +103,7 @@ multiple sessions, one artifact at a time.
 | 7 | Ansible Automation    | Complete    |
 | 8 | Feature-Flag Routing  | Complete    |
 | 9 | z/OSMF VSAM Workflow  | Complete    |
+| 10 | z/OSMF Liberty Dump Workflow | Complete |
 
 Status values: Not started / In progress / Complete.
 
