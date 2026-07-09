@@ -66,9 +66,56 @@ unique across (name, scope).
 | # | Error | Cause | Fix |
 |---|-------|-------|-----|
 | 1 | `IZUWF8017E: Property mapping error for property "api_version". Attempt to parse the mapping property failed.` | `propertyMapping` content is **not** a bare property name — it is a bracket-notation JSON path evaluated against the response body. | `["api_version"]` for a JSON-object property; `[0]["jobid"]` would address an array element; `[]` maps an entire text/plain body. Documented in IBM's "How to use z/OSMF Workflow REST steps" community blog (Qi Li, 2024). Registration succeeded on attempt 2. |
+| 2 | `IZUWF9999E: ... "No subject alternative names matching IP address 9.12.19.209 found"` (getInfo run) | With no `hostname` in the XML, the engine self-calls **using the host from the URL the client used to start the step**. Our Zowe profile connects by IP; the server certificate carries only the DNS name. | Drive `create`/`start` via the hostname (`--host zos31.pok.stglabs.ibm.com`) — the self-call then matches the certificate SAN. No XML change needed (see #3/#4 for why hardcoding the host is worse). |
+| 3 | `IZUWF8053E: The elements "username" and "password" are required when the HTTPS scheme is specified.` | Tried `<schemeName>https</schemeName>` + `<hostname>` to fix #2 in the XML. Explicit https makes the engine treat the target as a *remote* z/OSMF and demands credentials. | Abandoned this route (see #5): same-instance calls should omit scheme/host/port entirely. |
+| 4 | `IZUWF8052E: The elements "schemeName", "hostname", and "port" must be provided as a group.` | Tried `<hostname>` alone (hoping to keep default scheme + inherited auth). Not allowed. | Same as #3 — omit the whole group. |
+| 5 | `IZUWF9999E: ... log in as user andre ... failed with response code 401 ... IZUG410E` | With explicit scheme/host + credentials (via variables **and** hardcoded literals; lowercase **and** uppercase user), the engine's remote-login handshake gets 401 from its own instance — while the same credentials succeed via `POST /zosmf/services/authenticate` from the workstation and from the host shell (with and without the CSRF header). Engine-internal login path restriction; not resolvable as an unprivileged user. | Confirmed the credentialed-remote route is a dead end on this system; the `--host` fix from #2 makes it unnecessary. |
 
-Bonus finding from the same source: `requestHeaders` takes a JSON object string, e.g.
-`{"Content-Type":"text/plain"}` — added to the job-submit PUT.
+Working combination: **omit scheme/hostname/port/username/password in the XML and
+connect by DNS hostname when starting steps.** `requestHeaders` takes a JSON object
+string, e.g. `{"Content-Type":"text/plain"}` — required for the job-submit PUT (the
+jobs API needs a text/plain body).
+
+## Evidence of the verified run (ZOS31, 2026-07-09)
+
+Workflow instance `2d5f608c-cc0f-4311-9f7b-4cc12d648a5a`, created and driven entirely
+with Zowe CLI (`--host zos31.pok.stglabs.ibm.com`). Final `--steps-summary-only`:
+
+```text
+name        state    stepNumber misc
+getInfo     Complete 1          HTTP 200
+deriveNames Complete 2          N/A
+submitProbe Complete 3          HTTP 201
+writeReport Complete 4          JOB07085
+```
+
+Instance variables after the run (`returnData=variables`):
+
+```text
+name         value
+----         -----
+INFO_VERSION 1            <- captured by getInfo propertyMapping ["api_version"]
+REPORT_NAME  inventory-1  <- derived by deriveNames setVariable
+PROBE_JOBID  JOB07083     <- captured by submitProbe propertyMapping ["jobid"]
+PROBE_STATUS 201          <- captured by submitProbe actualStatusCode mapTo
+```
+
+Spool of the writeReport shell-JCL job (`zowe jobs view all-spool-content JOB07085`):
+
+```text
+===== z/OSMF SELF-INVENTORY =====
+z/OSMF API version : 1
+Report name        : inventory-1
+Probe JOBID        : JOB07083
+Probe HTTP status  : 201
+=================================
+SUCCESS: variables flowed across step types
+```
+
+Every value in the report was produced by a different step type (rest capture,
+setVariable derivation, rest job-submit) and consumed by the final shell-JCL template —
+the cross-step variable flow the artifact set out to prove. The probe job JOB07083
+(IEFBR14, submitted *by the workflow engine* through the jobs REST API) ended CC 0000.
 
 ### Open questions the XSD cannot answer (resolved by the register/run loop)
 
