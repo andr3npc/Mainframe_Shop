@@ -18,7 +18,7 @@ multiple sessions, one artifact at a time.
   to produce correct source, JCL, and documentation that the author takes
   to the mainframe to build and run.
 
-## Portfolio scope — 10 artifacts
+## Portfolio scope — 11 artifacts
 
 1. **Personal Macro Library** (`01-macro-library/`)
    Curated structured-programming and utility macros: `@ENTER`/`@LEAVE`,
@@ -90,6 +90,15 @@ multiple sessions, one artifact at a time.
     Verified on ZOS31 (JOB05976–78 all Complete; 19.5 MB
     zosmfServer.dump-26.07.07_14.48.14.zip found by the verify step).
 
+11. **z/OSMF REST Workflow** (`11-rest-workflow/`)
+    A z/OSMF workflow exercising the two remaining step action types:
+    rest steps calling z/OSMF's own APIs (info query, IEFBR14 job
+    submit) with response values captured into variables via
+    bracket-notation propertyMapping, and a setVariable step, feeding
+    a final shell-JCL report that proves cross-step variable flow.
+    Verified on ZOS31 (all 4 steps Complete; probe JOB07083 CC 0000;
+    report JOB07085 printed all captured values).
+
 ## Status
 
 | # | Artifact              | Status      |
@@ -104,6 +113,7 @@ multiple sessions, one artifact at a time.
 | 8 | Feature-Flag Routing  | Complete    |
 | 9 | z/OSMF VSAM Workflow  | Complete    |
 | 10 | z/OSMF Liberty Dump Workflow | Complete |
+| 11 | z/OSMF REST Workflow  | Complete    |
 
 Status values: Not started / In progress / Complete.
 
