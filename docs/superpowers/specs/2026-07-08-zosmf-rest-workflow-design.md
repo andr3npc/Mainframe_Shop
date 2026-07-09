@@ -37,7 +37,8 @@ punished by the validator. Step zero, before writing any XML:
 1. Download `workflow_v1.xsd` from the host (the schema referenced by
    every workflow) and read the `rest` and `setVariable` type
    definitions.
-2. Pull IBM sample workflows from `/usr/lpp/zosmf/samples` and grep
+2. Pull IBM sample workflows from `/Z31RS1/usr/lpp/zosmf/samples`
+   (the product filesystem's mount point on ZOS31) and grep
    for real `rest` / `setVariable` usage (note: XMLs there are tagged
    ISO8859-1 — pipe through `iconv -f ISO8859-1 -t IBM-1047` before
    grepping).
