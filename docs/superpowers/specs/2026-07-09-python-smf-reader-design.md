@@ -19,8 +19,12 @@ HLASM version cannot do cheaply.
 - ZOAU 1.3.5 at `/apps/zoautil` — its `zoautil_py` wheel is tagged **cp310**;
   compatibility with 3.13 unknown. **Not a dependency of this design** (road
   not taken; may be noted in docs).
-- `ANDRE.EPE.SMF30` exists, RECFM=VB, currently **HSM-migrated** — first
-  access triggers an automatic recall (expected, documented, not an error).
+- `ANDRE.EPE.SMF30` exists, RECFM=VB, was HSM-migrated and **recalled by the
+  2026-07-09 smoke test** (recall is automatic on first access; documented).
+- **Smoke test passed on ZOS31 (2026-07-09):** Python 3.13.0 read a 936-byte
+  `cp -B` staging copy and verified record type 30, subtype 5, SID `ZS31`
+  (EBCDIC via cp1047) at the expected offsets — data, interpreter, and
+  decode approach all confirmed live.
 - Record content: synthetic SMF type 30 subtype 5 records; report navigates
   the ID section (`SMF30IOF/ILN/ION` triplet) and CPU/accounting section
   (`SMF30COF/CLN/CON` triplet). Field map lives in
@@ -32,12 +36,16 @@ HLASM version cannot do cheaply.
 ### `12-python-smf-reader/src/smfrpt30.py`
 Single-file, **stdlib only** (argparse, struct, codecs/str.decode, json, sys).
 
-1. Input: path to a USS binary staging file containing the dataset copied
-   **with record boundaries preserved** (RDW-prefixed variable records).
-   Discovery task pins the staging tool: `cp -F rdw "//'ANDRE.EPE.SMF30'" <file>`
-   expected; ZOAU binary copy is the fallback.
-2. Record walk: read 4-byte RDW (big-endian halfword length + 2 reserved),
-   slice the record, skip records that are not type 30 subtype 5 (count them).
+1. Input: path to a USS binary staging file containing the dataset's raw
+   **blocks with BDW/RDWs intact**, produced by the JCL stage step reading the
+   VB dataset as RECFM=U (see RUNPYRPT.jcl below). Smoke-tested findings
+   (2026-07-09): this system's `cp` rejects `-F rdw` (usage error, even
+   `/bin/cp`); ZOAU `dcp -B` hung after a TMPDIR fix; plain `cp -B` works but
+   strips RDWs. The RECFM=U JCL trick is the reliable, JCL-native answer —
+   and parsing BDW→RDW→record in Python is truer to real SMF dump handling.
+2. Record walk: read 4-byte BDW (big-endian halfword block length), walk the
+   RDW-prefixed records inside each block, slice each record, skip records
+   that are not type 30 subtype 5 (count them).
 3. Section navigation: locate ID and CPU sections via their triplets
    (offset/length/count relative to the record start, as in SMFRPT30).
 4. Field decode: EBCDIC text via cp1047, binary counts via `struct`
@@ -51,7 +59,9 @@ Single-file, **stdlib only** (argparse, struct, codecs/str.decode, json, sys).
 
 ### `12-python-smf-reader/jcl/RUNPYRPT.jcl`
 BPXBATCH job, RC-gated like every other artifact's JCL:
-- STEP1 stages the dataset to USS preserving RDWs.
+- STEP1 (IEBGENER): `SYSUT1 DD DSN=ANDRE.EPE.SMF30,DISP=SHR,DCB=(RECFM=U,BLKSIZE=32760)`
+  → `SYSUT2 DD PATH='/z/andre/smf30.bin',...,FILEDATA=BINARY` — reading VB as
+  RECFM=U yields raw blocks including BDW/RDWs (classic sysprog trick).
 - STEP2 runs `/apps/python/lpp/IBM/cyp/v3r13/pyz/bin/python3 <script> <stage-file>`
   with stdout to a SYSOUT-visible file/DD so the report lands in the spool.
 
