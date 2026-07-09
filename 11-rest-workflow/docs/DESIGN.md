@@ -61,6 +61,15 @@ the value expression** (no `<expression>` child), with attributes:
 Uniqueness constraint (XSD line 72): within one step, `setVariable` entries must be
 unique across (name, scope).
 
+## Error archaeology (register loop on ZOS31)
+
+| # | Error | Cause | Fix |
+|---|-------|-------|-----|
+| 1 | `IZUWF8017E: Property mapping error for property "api_version". Attempt to parse the mapping property failed.` | `propertyMapping` content is **not** a bare property name — it is a bracket-notation JSON path evaluated against the response body. | `["api_version"]` for a JSON-object property; `[0]["jobid"]` would address an array element; `[]` maps an entire text/plain body. Documented in IBM's "How to use z/OSMF Workflow REST steps" community blog (Qi Li, 2024). Registration succeeded on attempt 2. |
+
+Bonus finding from the same source: `requestHeaders` takes a JSON object string, e.g.
+`{"Content-Type":"text/plain"}` — added to the job-submit PUT.
+
 ### Open questions the XSD cannot answer (resolved by the register/run loop)
 
 1. **`propertyMapping` content syntax for nested JSON** — both of our captures

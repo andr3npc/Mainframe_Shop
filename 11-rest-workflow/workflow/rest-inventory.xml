@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="workflow_v1.xsd">
+
+    <workflowInfo>
+        <workflowID>rest-inventory</workflowID>
+        <workflowDefaultName>REST Inventory</workflowDefaultName>
+        <workflowDescription>Self-inventory of the z/OSMF instance using rest and setVariable steps</workflowDescription>
+        <workflowVersion>1.0</workflowVersion>
+        <vendor>Custom</vendor>
+    </workflowInfo>
+
+    <variable name="INFO_VERSION" scope="instance" visibility="public">
+        <label>z/OSMF Version</label>
+        <abstract>Captured from GET /zosmf/info</abstract>
+        <description>Filled by the getInfo rest step via propertyMapping</description>
+        <category>Inventory</category>
+        <string/>
+    </variable>
+
+    <variable name="REPORT_NAME" scope="instance" visibility="public">
+        <label>Report Name</label>
+        <abstract>Derived by the deriveNames setVariable step</abstract>
+        <description>Built from INFO_VERSION by the setVariable step</description>
+        <category>Inventory</category>
+        <string/>
+    </variable>
+
+    <variable name="PROBE_JOBID" scope="instance" visibility="public">
+        <label>Probe JOBID</label>
+        <abstract>JOBID returned by the job-submit rest step</abstract>
+        <description>Filled by the submitProbe rest step via propertyMapping</description>
+        <category>Inventory</category>
+        <string/>
+    </variable>
+
+    <variable name="PROBE_STATUS" scope="instance" visibility="public">
+        <label>Probe HTTP Status</label>
+        <abstract>Actual HTTP status code from the job-submit rest step</abstract>
+        <description>Filled by the submitProbe rest step via actualStatusCode</description>
+        <category>Inventory</category>
+        <string/>
+    </variable>
+
+    <step name="getInfo">
+        <title>Query z/OSMF Info</title>
+        <description>Calls GET /zosmf/info and captures the API version</description>
+        <instructions>
+            Queries the z/OSMF info endpoint and captures api_version into INFO_VERSION.
+        </instructions>
+        <weight>1</weight>
+        <autoEnable>true</autoEnable>
+        <rest>
+            <httpMethod>GET</httpMethod>
+            <uriPath>/zosmf/info</uriPath>
+            <expectedStatusCode>200</expectedStatusCode>
+            <propertyMapping mapTo="INFO_VERSION">["api_version"]</propertyMapping>
+        </rest>
+    </step>
+
+    <step name="deriveNames">
+        <title>Derive Report Name</title>
+        <description>Sets REPORT_NAME from the captured version using setVariable</description>
+        <prereqStep name="getInfo"/>
+        <instructions substitution="true">
+            Builds the report name from INFO_VERSION (currently: ${instance-INFO_VERSION}).
+        </instructions>
+        <weight>1</weight>
+        <autoEnable>true</autoEnable>
+        <setVariable name="REPORT_NAME" substitution="true">inventory-${instance-INFO_VERSION}</setVariable>
+    </step>
+
+    <step name="submitProbe">
+        <title>Submit Probe Job</title>
+        <description>Submits a trivial IEFBR14 job via the jobs REST API and captures its JOBID</description>
+        <prereqStep name="deriveNames"/>
+        <instructions>
+            Submits an IEFBR14 probe job through PUT /zosmf/restjobs/jobs and captures
+            the returned jobid into PROBE_JOBID and the HTTP status into PROBE_STATUS.
+        </instructions>
+        <weight>2</weight>
+        <autoEnable>true</autoEnable>
+        <rest>
+            <httpMethod>PUT</httpMethod>
+            <uriPath>/zosmf/restjobs/jobs</uriPath>
+            <requestBody>//ANDREP   JOB AMS-CLEAN,ANDRE,NOTIFY=ANDRE,CLASS=A,MSGLEVEL=(1,1)
+//STEP1    EXEC PGM=IEFBR14</requestBody>
+            <expectedStatusCode>201</expectedStatusCode>
+            <actualStatusCode mapTo="PROBE_STATUS"/>
+            <propertyMapping mapTo="PROBE_JOBID">["jobid"]</propertyMapping>
+            <requestHeaders>{"Content-Type":"text/plain"}</requestHeaders>
+        </rest>
+    </step>
+
+    <step name="writeReport">
+        <title>Write Inventory Report</title>
+        <description>Echoes every captured/derived value, proving cross-step variable flow</description>
+        <prereqStep name="submitProbe"/>
+        <instructions>
+            Prints the inventory built from values produced by the earlier steps.
+        </instructions>
+        <weight>1</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true">
+#!/bin/sh
+echo "===== z/OSMF SELF-INVENTORY ====="
+echo "z/OSMF API version : ${instance-INFO_VERSION}"
+echo "Report name        : ${instance-REPORT_NAME}"
+echo "Probe JOBID        : ${instance-PROBE_JOBID}"
+echo "Probe HTTP status  : ${instance-PROBE_STATUS}"
+echo "================================="
+if [ -z "${instance-INFO_VERSION}" ]; then
+  echo "ERROR: INFO_VERSION did not flow from the rest step"
+  exit 1
+fi
+echo "SUCCESS: variables flowed across step types"
+            </inlineTemplate>
+            <submitAs>shell-JCL</submitAs>
+            <maxLrecl>1024</maxLrecl>
+        </template>
+    </step>
+
+</workflow>
