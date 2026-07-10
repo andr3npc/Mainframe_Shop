@@ -10,7 +10,9 @@ RST_AT = 64      # SMF30RST offset within ID section
 CPT_AT = 4       # SMF30CPT offset within CAS section
 CPS_AT = 8       # SMF30CPS offset within CAS section
 
-RTY_AT, TME_AT, STP_AT = 5, 6, 22
+RTY_AT = 5       # SMF record type byte (record-relative, RDW included)
+TME_AT = 6       # SMF30TME record write time, hundredths (fullword)
+STP_AT = 22      # SMF30 subtype halfword
 HDR = '  SMF TYPE 30 SUBTYPE 5 - JOB CPU/ELAPSED RPT'
 COLS = ' JOB NAME        CPU (SEC)    ELAPSED (SEC)'
 
@@ -52,7 +54,8 @@ def _records(data):
     RDW stream (which could drop or fabricate rows). Bare-RDW framing
     is accepted only when the outer BDW tiling is impossible. If
     neither tiling validates, ParseError names the first inconsistency
-    found by each attempt."""
+    found by each attempt. Note: an empty BDW block (length 4, no
+    records) fails the outer tiling minimum of 8 by design."""
     if len(data) < 4:
         raise ParseError('input shorter than one descriptor word')
     try:
@@ -86,12 +89,23 @@ def parse(data):
             continue
         if struct.unpack('>H', rec[STP_AT:STP_AT+2])[0] != 5:
             continue
+        # COF_AT is the higher of the two triplet offsets, so this one
+        # check also guarantees the IOF_AT triplet fits.
+        if COF_AT + 8 > len(rec):
+            raise ParseError('record too short for triplet headers '
+                             '(%d < %d)' % (len(rec), COF_AT + 8))
         ioff, iln, ion = _triplet(rec, IOF_AT)
         coff, cln, con = _triplet(rec, COF_AT)
         if ion == 0 or con == 0:          # absent section: skip, like SMFRPT30
             continue
         if ioff + iln > len(rec) or coff + cln > len(rec):
             raise ParseError('triplet points past record end')
+        if iln < RST_AT + 4:
+            raise ParseError('ID section too short (%d) for SMF30RST '
+                             'at +%d' % (iln, RST_AT))
+        if cln < CPS_AT + 4:
+            raise ParseError('CAS section too short (%d) for SMF30CPS '
+                             'at +%d' % (cln, CPS_AT))
         ids, cas = rec[ioff:ioff+iln], rec[coff:coff+cln]
         jbn = ids[0:8].decode('cp1047').rstrip()
         tme = struct.unpack('>I', rec[TME_AT:TME_AT+4])[0]
@@ -120,7 +134,8 @@ def main(argv=None):
     ap.add_argument('--json', action='store_true', dest='as_json')
     a = ap.parse_args(argv)
     try:
-        data = open(a.stagefile, 'rb').read()
+        with open(a.stagefile, 'rb') as f:
+            data = f.read()
         if not data:
             raise ParseError('staging file is empty')
         rows = parse(data)

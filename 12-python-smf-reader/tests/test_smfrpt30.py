@@ -1,4 +1,4 @@
-import json, os, struct, sys, unittest
+import contextlib, io, json, os, struct, sys, tempfile, unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import smfrpt30 as M
@@ -65,6 +65,47 @@ class TestParse(unittest.TestCase):
         bad = struct.pack('>HH', 104, 0) + rec
         with self.assertRaises(M.ParseError):
             M.parse(bad)
+
+    def _tmpfile(self, data):
+        f = tempfile.NamedTemporaryFile(delete=False)
+        f.write(data)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_main_rc4(self):
+        # A well-framed file with no type-30 subtype-5 records -> RC 4.
+        path = self._tmpfile(blockof(mkrec('NOPE', 100, 0, 1, 1, rty=70)))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = M.main([path])
+        self.assertEqual(rc, 4)
+        self.assertIn('no type 30 subtype 5 records', err.getvalue())
+
+    def test_main_rc8_short_record(self):
+        # A type-30 subtype-5 record that ends before the triplet
+        # headers (len 30 < COF_AT+8) must be RC 8, not a traceback.
+        r = bytearray(30)
+        struct.pack_into('>H', r, 0, 30)              # RDW
+        r[5] = 30                                     # SMF type 30
+        struct.pack_into('>H', r, 22, 5)              # subtype 5
+        path = self._tmpfile(blockof(bytes(r)))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = M.main([path])
+        self.assertEqual(rc, 8)
+        self.assertIn('SMFRPT30PY ERROR:', err.getvalue())
+
+    def test_main_json(self):
+        path = self._tmpfile(
+            blockof(mkrec('PAYROLL', 3960000, 3600000, 250000, 1500)))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = M.main(['--json', path])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out.getvalue()),
+                         [{'job': 'PAYROLL',
+                           'cpu_sec': 2515.0, 'elapsed_sec': 3600.0}])
 
 
 if __name__ == '__main__':
