@@ -34,6 +34,7 @@ real system, see [PRODUCTION-NOTES.md](PRODUCTION-NOTES.md).
 | 9 | [z/OSMF VSAM Workflow](09-vsam-workflow/) | Modern z/OS provisioning — a z/OSMF workflow that creates a VSAM KSDS from variable-driven IDCAMS `DEFINE CLUSTER` (fileTemplate JCL), verifies it with TSO-REXX `LISTCAT`, and optionally deletes it; includes the REPRO initial-load JCL. |
 | 10 | [z/OSMF Liberty Dump Workflow](10-liberty-dump-workflow/) | Server diagnostics as automation — a z/OSMF workflow of shell-JCL steps that verifies the Liberty install, triggers a javadump of the z/OSMF server via an MVS modify command (`F IZUSVR1,JAVADUMP`), and proves the dump archive landed on disk (verify → act → verify). |
 | 11 | [z/OSMF REST Workflow](11-rest-workflow/) | Completing the workflow action-type trilogy — rest steps that call z/OSMF's own APIs (info, job submit) with response values captured into variables, a setVariable step, and a final shell step proving the values flow across step types. |
+| 12 | [Python SMF Reader](12-python-smf-reader/) | Modern languages on z/OS — IBM Open Enterprise SDK for Python re-reads the SMF type-30 dataset artifact 5's HLASM wrote (BDW/RDW block parsing, EBCDIC + big-endian struct decode, triplet navigation) and prints a report diff-identical to SMFRPT30's, plus JSON. |
 
 ## Repository layout
 
@@ -52,6 +53,7 @@ mainframe-portfolio/
   09-vsam-workflow/      workflow/ jcl/ docs/ README.md
   10-liberty-dump-workflow/ workflow/ docs/ README.md
   11-rest-workflow/      workflow/ docs/ README.md
+  12-python-smf-reader/  src/ tests/ jcl/ docs/ README.md
 ```
 
 ### A note on file extensions

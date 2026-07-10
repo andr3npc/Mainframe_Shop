@@ -18,7 +18,7 @@ multiple sessions, one artifact at a time.
   to produce correct source, JCL, and documentation that the author takes
   to the mainframe to build and run.
 
-## Portfolio scope — 11 artifacts
+## Portfolio scope — 12 artifacts
 
 1. **Personal Macro Library** (`01-macro-library/`)
    Curated structured-programming and utility macros: `@ENTER`/`@LEAVE`,
@@ -99,6 +99,12 @@ multiple sessions, one artifact at a time.
     Verified on ZOS31 (all 4 steps Complete; probe JOB07083 CC 0000;
     report JOB07085 printed all captured values).
 
+12. **Python SMF Reader** (`12-python-smf-reader/`)
+    IBM Open Enterprise SDK for Python (3.13) re-reads artifact 5's
+    ANDRE.EPE.SMF30: JCL stages the VB dataset as RECFM=U (BDW/RDWs
+    intact), pure-stdlib Python walks blocks/records/triplets and prints
+    a report diff-identical to SMFRPT30's, plus --json. Verified on ZOS31.
+
 ## Status
 
 | # | Artifact              | Status      |
@@ -114,6 +120,7 @@ multiple sessions, one artifact at a time.
 | 9 | z/OSMF VSAM Workflow  | Complete    |
 | 10 | z/OSMF Liberty Dump Workflow | Complete |
 | 11 | z/OSMF REST Workflow  | Complete    |
+| 12 | Python SMF Reader     | Complete    |
 
 Status values: Not started / In progress / Complete.
 
