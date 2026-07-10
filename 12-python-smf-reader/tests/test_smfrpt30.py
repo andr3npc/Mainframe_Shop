@@ -53,6 +53,13 @@ class TestParse(unittest.TestCase):
         self.assertEqual(got, [{'job': 'BACKUP',
                                 'cpu_sec': 100.0, 'elapsed_sec': 120.0}])
 
+    def test_multi_block(self):
+        b1 = blockof(mkrec('PAYROLL', 3960000, 3600000, 250000, 1500))
+        b2 = blockof(mkrec('BACKUP', 3972000, 3960000, 9999, 1))
+        rows = M.parse(b1 + b2)
+        self.assertEqual(rows, [('PAYROLL', 251500, 360000),
+                                ('BACKUP', 10000, 12000)])
+
     def test_truncated_record_raises(self):
         rec = mkrec('PAYROLL', 3960000, 3600000, 250000, 1500)[:100]
         bad = struct.pack('>HH', 104, 0) + rec

@@ -19,40 +19,55 @@ class ParseError(Exception):
     pass
 
 
+def _chain(data, start, end, lo, kind):
+    """Validate that length-prefixed chunks EXACTLY tile data[start:end]
+    (each descriptor halfword >= lo, chunks sum to end-start with no
+    slack); return the (start, end) pair of every chunk, or raise
+    ParseError naming the first inconsistency."""
+    chunks, i = [], start
+    while i < end:
+        if i + 4 > end:
+            raise ParseError('%s: %d trailing byte(s) at offset %d cannot '
+                             'hold a descriptor word' % (kind, end - i, i))
+        ln = struct.unpack('>H', data[i:i+2])[0]
+        if ln < lo:
+            raise ParseError('%s: length %d at offset %d below minimum %d'
+                             % (kind, ln, i, lo))
+        if i + ln > end:
+            raise ParseError('%s: length %d at offset %d overruns end %d'
+                             % (kind, ln, i, end))
+        chunks.append((i, i + ln))
+        i += ln
+    return chunks
+
+
 def _records(data):
-    """Yield records (incl. RDW) from BDW+RDW blocks or a bare RDW stream."""
+    """Return records (incl. RDW) by deterministic validate-by-tiling.
+
+    BDW+RDW framing is committed to when the outer chunks (each >= 8)
+    exactly tile the whole file; every block's inner RDWs must then
+    exactly tile that block, and any inner inconsistency raises — a
+    file whose outer chunks tile but whose block bodies do not is
+    corrupt BDW data and is never silently reinterpreted as a bare
+    RDW stream (which could drop or fabricate rows). Bare-RDW framing
+    is accepted only when the outer BDW tiling is impossible. If
+    neither tiling validates, ParseError names the first inconsistency
+    found by each attempt."""
     if len(data) < 4:
         raise ParseError('input shorter than one descriptor word')
-    first = struct.unpack('>H', data[0:2])[0]
-    i = 0
-    # A BDW's length field covers the whole block it introduces; the
-    # staging file (docs/DESIGN.md) is always exactly one BDW-framed
-    # block, so "first halfword equals the total byte count" is a
-    # reliable, magnitude-independent way to detect BDW+RDW mode (it
-    # also correctly classifies short/truncated test blocks that a
-    # fixed size threshold like ">316" would misclassify as a bare
-    # RDW stream).
-    if first == len(data):                # BDW (includes itself + reserved)
-        while i + 4 <= len(data):
-            bl = struct.unpack('>H', data[i:i+2])[0]
-            if bl < 8 or i + bl > len(data):
-                raise ParseError('bad BDW length %d at offset %d' % (bl, i))
-            j, end = i + 4, i + bl
-            while j + 4 <= end:
-                rl = struct.unpack('>H', data[j:j+2])[0]
-                if rl < 4 or j + rl > end:
-                    raise ParseError('bad RDW length %d at offset %d'
-                                     % (rl, j))
-                yield data[j:j+rl]
-                j += rl
-            i = end
-    else:                                 # RDW-only stream
-        while i + 4 <= len(data):
-            rl = struct.unpack('>H', data[i:i+2])[0]
-            if rl < 4 or i + rl > len(data):
-                raise ParseError('bad RDW length %d at offset %d' % (rl, i))
-            yield data[i:i+rl]
-            i += rl
+    try:
+        blocks = _chain(data, 0, len(data), 8, 'BDW')
+    except ParseError as bdw_err:
+        try:
+            return [data[s:e]
+                    for s, e in _chain(data, 0, len(data), 4, 'RDW')]
+        except ParseError as rdw_err:
+            raise ParseError('no framing tiles the input (%s; %s)'
+                             % (bdw_err, rdw_err)) from None
+    recs = []
+    for s, e in blocks:
+        recs.extend(data[a:b] for a, b in _chain(data, s + 4, e, 4, 'RDW'))
+    return recs
 
 
 def _triplet(rec, at):
