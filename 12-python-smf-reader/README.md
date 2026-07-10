@@ -8,7 +8,7 @@ BDWs/RDWs intact), and `smfrpt30.py` walks blocks, records, and
 self-defining-section triplets to print a report diff-identical to
 `SMFRPT30`'s, plus `--json`.
 
-Verified on a real z/OS 3.1 system (ITSCPLEX / ZOS31, 2026-07-10):
+Verified on a real z/OS 3.1 system (ITSCPLEX / ZOS31, 2026-07-09/10):
 `ANDRER30` (`RUNRPT30.jcl`) JOB07111 CC 0000 captured the golden HLASM
 report; `ANDRESTG` (`STAGEVB.jcl`) JOB07206 CC 0000 proved the
 standalone staging step; `ANDREPY` (`RUNPYRPT.jcl`) JOB07278 CC 0000

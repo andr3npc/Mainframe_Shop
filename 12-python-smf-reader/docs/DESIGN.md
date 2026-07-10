@@ -105,11 +105,17 @@ is present (not RDW-first): a bare first record would show `01 3C` (316)
 in that position. Bytes 4-5 `01 3C` = 316 = the first record's RDW
 length, confirming `BDW+RDW` mode exactly as expected.
 
-## Evidence of the verified run (ZOS31, 2026-07-10)
+## Evidence of the verified run (ZOS31, 2026-07-09/10)
 
 End-to-end equivalence proof: the HLASM `SMFRPT30` report and the Python
 `smfrpt30.py` report are diff-identical, byte for byte (modulo the ASA
 carriage-control column that only the HLASM report has).
+
+Dates: `ANDRESTG` (JOB07206), the standalone staging job from Task 2,
+ran on 2026-07-09 host time — the `ls -l` evidence in "Verified staging
+run" above shows `/z/andre/smf30.bin` dated `Jul  9 22:23`. `ANDREPY`
+(JOB07278) ran on 2026-07-10 (its JESYSMSG timestamps read `2026191` =
+July 10), with its own `STAGE` step re-staging the same file that day.
 
 | Job | JOBID | Step | RC | Purpose |
 |-----|-------|------|----|---------|
@@ -149,8 +155,12 @@ column exactly, confirming the JSON path shares the same parse/compute
 logic as the text report path.
 
 The 9-test unit suite (`tests/test_smfrpt30.py`) continues to pass 9/9
-on the host's Python 3.13 (`/apps/python/lpp/IBM/cyp/v3r13/pyz/bin/python3
--m pytest`), unchanged from the state recorded after commit `b56fb92`.
+on the host's Python 3.13 via stdlib `unittest` — run as
+`/apps/python/lpp/IBM/cyp/v3r13/pyz/bin/python3
+/z/andre/a12/tests/test_smfrpt30.py` (equivalently `python3 -m unittest
+-v` from `/z/andre/a12/tests`) — unchanged from the state recorded
+after commit `b56fb92`. No pip packages are involved anywhere in this
+artifact; the test runner, like the parser, is stdlib only.
 
 ## Error archaeology
 
