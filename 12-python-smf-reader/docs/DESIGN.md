@@ -19,9 +19,15 @@ included — this is how `SMF30IOF`/`SMF30COF` are defined in `IFASMFR
 (30)`), and **section-relative** for the three arithmetic-pinned fields
 (offset from the start of the section the triplet points to).
 
+**Scope caveat:** these offsets are pinned to *this* dataset — artifact
+5's `MKSMF30` builds deliberately shortened ID (72-byte) and CAS
+(16-byte) sections, so the table below is not a general `IFASMFR (30)`
+layout reference; real SMF30 data would need the same empirical
+re-derivation.
+
 | Field | Offset | Evidence |
 |-------|--------|----------|
-| `SMF30IOF` (ID section triplet: offset/len/count) | header +32 | Triplet bytes at record offset 32 decode as `(228, 72, 1)` — offset 228, length 72, count 1 — the exact ID-section geometry (`RHDRLEN=228`) baked into `MKSMF30.asm`. Found identically in all 3 records. |
+| `SMF30IOF` (ID section triplet: offset/len/count) | header +32 | Triplet bytes at record offset 32 decode as `(228, 72, 1)` — offset 228, length 72, count 1 — the exact ID-section geometry baked into `MKSMF30.asm`: the section starts right after the header (`RHDRLEN=228`, hence offset 228) and its own length is `RIDLEN=72`. Found identically in all 3 records. |
 | `SMF30COF` (processor/CAS section triplet: offset/len/count) | header +56 | Triplet bytes at record offset 56 decode as `(300, 16, 1)` — offset 300 (= 228+72), length 16, count 1 — the exact CAS-section geometry (`RCASLEN=16`). Found identically in all 3 records. |
 | `SMF30RST` (reader-in time, hundredths) | ID section +64 (record offset 228+64=292) | For every job, `SMF30TME − SMF30RST` must equal the golden elapsed time (ANDREJ1 500.00s=50000, PAYROLL 3600.00s=360000, BACKUP 120.00s=12000). Searching ID-section offsets 0..67 for a fullword equal to `TME − golden_elapsed` produced exactly **one** candidate offset — 64 — consistent across all three records. Independently confirmed against `MKSMF30.asm`'s literal table: ANDREJ1 `TBRST=F'3240000'` = `TME 3290000 − 50000`, matching exactly. |
 | `SMF30CPT` (TCB CPU time, hundredths) | CAS section +4 (record offset 300+4=304) | Of the four CAS fullwords (offsets 0/4/8/12 — bytes 0 and 12 are always 0 in this sample), offsets +4 and +8 sum to the golden CPU time for every job (ANDREJ1 130.23s=13023, PAYROLL 2515.00s=251500, BACKUP 100.00s=10000). `MKSMF30.asm` pins which is which: `TBCPT` (TCB CPU) is written before `TBCPS` (SRB CPU) into `SMF30CPT`/`SMF30CPS`, and the +4 word matches `TBCPT`'s literal value exactly for all three jobs (e.g. ANDREJ1 `TBCPT=F'12345'` = CAS+4 value 12345). |
@@ -33,8 +39,12 @@ Discovery script output (verbatim, run on ZOS31 via
 ```
 file bytes: 952
 mode: BDW+RDW records: 3 lengths: [316, 316, 316]
-triplet at header offset 32 -> (228, 72, 1)
-triplet at header offset 56 -> (300, 16, 1)
+record 0 triplet at header offset 32 -> (228, 72, 1)
+record 0 triplet at header offset 56 -> (300, 16, 1)
+record 1 triplet at header offset 32 -> (228, 72, 1)
+record 1 triplet at header offset 56 -> (300, 16, 1)
+record 2 triplet at header offset 32 -> (228, 72, 1)
+record 2 triplet at header offset 56 -> (300, 16, 1)
 ANDREJ1 TME 3290000 RST candidates at ID+ [64]
 PAYROLL TME 3960000 RST candidates at ID+ [64]
 BACKUP TME 3972000 RST candidates at ID+ [64]
