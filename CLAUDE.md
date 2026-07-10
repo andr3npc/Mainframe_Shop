@@ -103,7 +103,9 @@ multiple sessions, one artifact at a time.
     IBM Open Enterprise SDK for Python (3.13) re-reads artifact 5's
     ANDRE.EPE.SMF30: JCL stages the VB dataset as RECFM=U (BDW/RDWs
     intact), pure-stdlib Python walks blocks/records/triplets and prints
-    a report diff-identical to SMFRPT30's, plus --json. Verified on ZOS31.
+    a report diff-identical to SMFRPT30's, plus --json. Verified on
+    ZOS31 (RUNRPT30 JOB07111, STAGEVB JOB07206, RUNPYRPT JOB07278, all
+    CC 0000; report diff-identical to SMFRPT30's).
 
 ## Status
 

@@ -1,22 +1,21 @@
 # Artifact 12 — Python SMF Type-30 Reader (IBM Open Enterprise SDK for Python)
 
 IBM Open Enterprise SDK for Python (3.13) re-reads `ANDRE.EPE.SMF30` —
-the SMF type-30 subtype-5 dataset artifact 5's HLASM `MKSMF30` wrote —
-and reproduces artifact 5's `SMFRPT30` report from pure-stdlib Python:
-JCL stages the VB dataset as `RECFM=U` (keeping BDWs/RDWs intact), and
-`smfrpt30.py` walks blocks, records, and self-defining-section triplets
-to print the identical job CPU/elapsed report, plus a `--json` mode the
-HLASM version has no equivalent for.
+the SMF type-30 subtype-5 dataset that artifact 5's HLASM program
+`MKSMF30` wrote — and reproduces artifact 5's `SMFRPT30` report from
+pure-stdlib Python: JCL stages the VB dataset as `RECFM=U` (keeping
+BDWs/RDWs intact), and `smfrpt30.py` walks blocks, records, and
+self-defining-section triplets to print a report diff-identical to
+`SMFRPT30`'s, plus `--json`.
 
 Verified on a real z/OS 3.1 system (ITSCPLEX / ZOS31, 2026-07-10):
 `ANDRER30` (`RUNRPT30.jcl`) JOB07111 CC 0000 captured the golden HLASM
 report; `ANDRESTG` (`STAGEVB.jcl`) JOB07206 CC 0000 proved the
 standalone staging step; `ANDREPY` (`RUNPYRPT.jcl`) JOB07278 CC 0000
 (`STAGE` 0000, `PYRPT` 0000) staged and ran the Python report in one
-job. The Python report is diff-identical to the golden HLASM report
-(empty `git diff --no-index` after stripping the golden capture's ASA
-carriage-control column), and `--json` mode, run directly over SSH,
-reproduces the same CPU/elapsed values in JSON.
+job. The Python report is diff-identical to the golden HLASM report,
+and `--json` mode, run directly over SSH, reproduces the same
+CPU/elapsed values.
 
 ## What it demonstrates
 
