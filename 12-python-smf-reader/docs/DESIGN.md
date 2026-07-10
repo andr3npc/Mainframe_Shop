@@ -104,3 +104,62 @@ First halfword `03 B8` = 952 = block length (3×316+4), confirming a BDW
 is present (not RDW-first): a bare first record would show `01 3C` (316)
 in that position. Bytes 4-5 `01 3C` = 316 = the first record's RDW
 length, confirming `BDW+RDW` mode exactly as expected.
+
+## Evidence of the verified run (ZOS31, 2026-07-10)
+
+End-to-end equivalence proof: the HLASM `SMFRPT30` report and the Python
+`smfrpt30.py` report are diff-identical, byte for byte (modulo the ASA
+carriage-control column that only the HLASM report has).
+
+| Job | JOBID | Step | RC | Purpose |
+|-----|-------|------|----|---------|
+| `RUNRPT30` (`RUNRPT30.jcl`) | JOB07111 | `RPT` | CC 0000 | Golden report capture (HLASM `SMFRPT30` against `ANDRE.EPE.SMF30`) |
+| `ANDRESTG` (`STAGEVB.jcl`) | JOB07206 | `STAGE` | CC 0000 | Stage `ANDRE.EPE.SMF30` to `/z/andre/smf30.bin`, BDW/RDW intact (952 bytes) |
+| `ANDREPY` (`RUNPYRPT.jcl`) | JOB07278 | `STAGE` | CC 0000 | Re-stage to `/z/andre/smf30.bin` in the same job as the report run |
+| `ANDREPY` (`RUNPYRPT.jcl`) | JOB07278 | `PYRPT` | CC 0000 | `BPXBATCH` runs `python3 /z/andre/a12/src/smfrpt30.py /z/andre/smf30.bin`, report to `STDOUT` spool |
+
+Python report pulled from JOB07278's `PYRPT` `STDOUT` spool DD (id 103,
+5 records) and written to `tmp/artifact12/python-report.txt` (UTF-8, no
+BOM, CRLF). The golden capture (`tmp/artifact12/golden-report.txt`, 5
+lines, CRLF) has column 1 of every line stripped as the ASA
+carriage-control character — the HLASM `RPTDD` is a print-format SYSOUT
+DD with a carriage-control column that plain `STDOUT` from Python does
+not have — producing `tmp/artifact12/golden-noasa.txt`. Diffed:
+
+```
+git diff --no-index tmp/artifact12/golden-noasa.txt tmp/artifact12/python-report.txt
+```
+
+Result: **empty diff, exit 0.** No output at all — the two reports are
+identical byte for byte.
+
+JSON mode, run directly over SSH rather than through spool (`zowe uss
+issue ssh`):
+
+```
+python3 /z/andre/a12/src/smfrpt30.py /z/andre/smf30.bin --json
+```
+
+```
+[{"job": "ANDREJ1", "cpu_sec": 130.23, "elapsed_sec": 500.0}, {"job": "PAYROLL", "cpu_sec": 2515.0, "elapsed_sec": 3600.0}, {"job": "BACKUP", "cpu_sec": 100.0, "elapsed_sec": 120.0}]
+```
+
+`cpu_sec` values (130.23 / 2515.0 / 100.0) match the golden report's CPU
+column exactly, confirming the JSON path shares the same parse/compute
+logic as the text report path.
+
+The 9-test unit suite (`tests/test_smfrpt30.py`) continues to pass 9/9
+on the host's Python 3.13 (`/apps/python/lpp/IBM/cyp/v3r13/pyz/bin/python3
+-m pytest`), unchanged from the state recorded after commit `b56fb92`.
+
+## Error archaeology
+
+Honest record of real errors hit across Tasks 1-4, and what actually
+fixed each one — not a cleaned-up narrative.
+
+| # | What went wrong | Root cause | Fix |
+|---|---|---|---|
+| a | The first golden-report capture, saved from a PowerShell terminal with `Get-Content ... -Encoding utf8`, silently gained a 3-byte UTF-8 BOM at the start of the file, which would have made every downstream diff and offset calculation wrong. | Windows PowerShell 5.1's `-Encoding utf8` always emits a BOM; there is no flag to suppress it. | Rewrote the file from raw bytes with `[System.IO.File]::WriteAllBytes` (and later `WriteAllLines` with `New-Object System.Text.UTF8Encoding($false)`), never PowerShell 5.1's built-in `-Encoding utf8`. |
+| b | Two successive record-framing heuristics misclassified real inputs: first, "outer chunk length > 316" to detect a BDW misclassified the truncation test (a short file whose first halfword happened to be a small, valid-looking length); its replacement, "first chunk length == len(data)" to detect a single-block BDW, in turn misclassified legitimate multi-block files (whose first block is shorter than the whole file by design). | Both heuristics tried to distinguish BDW-framed from bare-RDW-framed input from a single scalar comparison instead of validating the whole byte layout. | Replaced both with deterministic validate-by-tiling: `_chain()` walks length-prefixed chunks and only accepts a framing if the chunks exactly tile the byte range with no slack and no overrun; `_records()` commits to BDW+RDW only when the *outer* tiling (block-level) succeeds first, then requires the *inner* tiling (RDW-level) to succeed within each block, raising rather than silently falling back to bare-RDW if the inner tiling fails. |
+| c | `struct.unpack` raised an uncaught `struct.error` (not `ParseError`) out of `main()` for short-but-plausible records — ones that passed the `RTY=30`/`STP=5` type/subtype check but were shorter than 64 bytes, too short to hold the fields the parser reads next. | The parser assumed any record that matched type/subtype was long enough to hold every field it goes on to read, with no explicit bounds check before the reads. | Added explicit bounds checks (`ParseError` raised by name, e.g. "record shorter than SMF header", "record too short for triplet headers", "ID section too short ... for SMF30RST") ahead of every `struct.unpack` that depends on a length not yet validated, plus `main()`-level tests asserting RC 8 (not an unhandled exception) on short/malformed input. |
+| d | Nothing new. The plan flagged a risk that `BPXBATCH`'s `STDPARM` two-line continuation (`SH ... python3` on one line, the script path and argument wrapped to a second line) might arrive at the shell mangled. `RUNPYRPT.jcl` was submitted with the plan's exact two-line `STDPARM` unchanged, and `PYRPT` (JOB07278) completed with `COND CODE 0000` and produced the correct 5-line report on the first submission — no mangling observed, no single-line fallback needed. | N/A | N/A — recorded here only because the plan asked to note whatever was actually required; in this run, nothing extra was required. |
