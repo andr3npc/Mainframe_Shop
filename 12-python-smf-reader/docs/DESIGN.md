@@ -113,7 +113,7 @@ carriage-control column that only the HLASM report has).
 
 | Job | JOBID | Step | RC | Purpose |
 |-----|-------|------|----|---------|
-| `RUNRPT30` (`RUNRPT30.jcl`) | JOB07111 | `RPT` | CC 0000 | Golden report capture (HLASM `SMFRPT30` against `ANDRE.EPE.SMF30`) |
+| `ANDRER30` (`RUNRPT30.jcl`) | JOB07111 | `RPT` | CC 0000 | Golden report capture (HLASM `SMFRPT30` against `ANDRE.EPE.SMF30`) |
 | `ANDRESTG` (`STAGEVB.jcl`) | JOB07206 | `STAGE` | CC 0000 | Stage `ANDRE.EPE.SMF30` to `/z/andre/smf30.bin`, BDW/RDW intact (952 bytes) |
 | `ANDREPY` (`RUNPYRPT.jcl`) | JOB07278 | `STAGE` | CC 0000 | Re-stage to `/z/andre/smf30.bin` in the same job as the report run |
 | `ANDREPY` (`RUNPYRPT.jcl`) | JOB07278 | `PYRPT` | CC 0000 | `BPXBATCH` runs `python3 /z/andre/a12/src/smfrpt30.py /z/andre/smf30.bin`, report to `STDOUT` spool |
