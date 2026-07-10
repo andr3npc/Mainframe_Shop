@@ -105,7 +105,7 @@ multiple sessions, one artifact at a time.
     intact), pure-stdlib Python walks blocks/records/triplets and prints
     a report diff-identical to SMFRPT30's, plus --json. Verified on
     ZOS31 (RUNRPT30 JOB07111, STAGEVB JOB07206, RUNPYRPT JOB07278, all
-    CC 0000; report diff-identical to SMFRPT30's).
+    CC 0000).
 
 ## Status
 
