@@ -1,0 +1,973 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="workflow_v1.xsd">
+
+    <workflowInfo>
+        <workflowID>zos-health-check</workflowID>
+        <workflowDefaultName>zOS Health Check</workflowDefaultName>
+        <workflowDescription>z/OS health snapshot: spool, CPU, paging, dataset I/O; renders HTML report on-host.</workflowDescription>
+        <workflowVersion>2.0</workflowVersion>
+        <vendor>Andre</vendor>
+    </workflowInfo>
+
+    <!-- ============================================================ -->
+    <!-- VARIABLES                                                     -->
+    <!-- ============================================================ -->
+
+    <variable name="WORKDIR" scope="instance" visibility="public">
+        <label>USS Work Directory</label>
+        <abstract>USS directory the collectors write VERDICT files to and the report step reads</abstract>
+        <description>Must already exist and be writable by the workflow owner. Each collector writes one hc_&lt;axis&gt;.txt file here; the final step concatenates them and writes zos_health_report.html here. generate_report.py must also be present in this directory (upload it once).</description>
+        <category>Report</category>
+        <string><default>/z/andre/hc_work</default></string>
+    </variable>
+
+    <variable name="PYTHON3" scope="instance" visibility="public">
+        <label>Python 3 Interpreter Path</label>
+        <abstract>Full USS path to the IBM Open Enterprise SDK for Python interpreter</abstract>
+        <description>Used by the final report step. Must be an executable python3 (3.7+). Default is the IBM Open Enterprise SDK for Python 3.13 location verified on this system.</description>
+        <category>Report</category>
+        <string><default>/apps/python/lpp/IBM/cyp/v3r13/pyz/bin/python3</default></string>
+    </variable>
+
+    <variable name="SPOOL_HIGH_WATER" scope="instance" visibility="public">
+        <label>Spool High Water Threshold (%)</label>
+        <abstract>Overall spool % at or above which the spool axis is RED</abstract>
+        <description>Numeric percentage 1-99. The spool step emits VERDICT:SPOOL:&lt;pct&gt;:&lt;threshold&gt;:RED when this is breached, AMBER when within 10 points below it, GREEN otherwise.</description>
+        <category>Spool</category>
+        <string><default>80</default></string>
+    </variable>
+
+    <variable name="TOP_N" scope="instance" visibility="public">
+        <label>Top Consumer Count</label>
+        <abstract>How many largest consumers to list in the spool and dataset steps</abstract>
+        <description>Whole number 1-20.</description>
+        <category>Spool</category>
+        <string><default>10</default></string>
+    </variable>
+
+    <variable name="CPU_RATIO_RED" scope="instance" visibility="public">
+        <label>CPU Ratio RED Threshold (%)</label>
+        <abstract>CPU/elapsed % below which a long-running STC is graded RED</abstract>
+        <description>A started task running longer than MIN_ELAPSED_HOURS with a CPU/elapsed ratio below this value is likely holding an MLC software charge for near-zero productive work.</description>
+        <category>CPU</category>
+        <string><default>2</default></string>
+    </variable>
+
+    <variable name="CPU_RATIO_AMBER" scope="instance" visibility="public">
+        <label>CPU Ratio AMBER Threshold (%)</label>
+        <abstract>CPU/elapsed % below which a long-running STC is graded AMBER</abstract>
+        <description>Must be greater than CPU_RATIO_RED.</description>
+        <category>CPU</category>
+        <string><default>10</default></string>
+    </variable>
+
+    <variable name="MIN_ELAPSED_HOURS" scope="instance" visibility="public">
+        <label>Minimum STC Elapsed Hours</label>
+        <abstract>An STC must have run at least this long before its CPU ratio is graded</abstract>
+        <description>Prevents short-lived jobs from triggering false CPU-ratio alerts during start-up phases.</description>
+        <category>CPU</category>
+        <string><default>4</default></string>
+    </variable>
+
+    <variable name="PGRATE_RED" scope="instance" visibility="public">
+        <label>Paging Rate RED Threshold (page-ins/sec)</label>
+        <abstract>Sustained paging rate above which memory is graded RED</abstract>
+        <description>Compared against the DEMAND PAGING column of the RMF Postprocessor Summary report. Values above 100/s typically indicate real-storage shortfall on a lightly-loaded system.</description>
+        <category>Memory</category>
+        <string><default>100</default></string>
+    </variable>
+
+    <variable name="PGRATE_AMBER" scope="instance" visibility="public">
+        <label>Paging Rate AMBER Threshold (page-ins/sec)</label>
+        <abstract>Sustained paging rate above which memory is graded AMBER</abstract>
+        <description>Must be less than PGRATE_RED.</description>
+        <category>Memory</category>
+        <string><default>25</default></string>
+    </variable>
+
+    <variable name="SMF_INPUT_DSN" scope="instance" visibility="public">
+        <label>SMF Archive Dataset</label>
+        <abstract>Dataset name of the SMF archive to read for the CPU, memory and dataset steps</abstract>
+        <description>Typically SYS1.MAN1, SYS1.MAN2, or a customer MANX/MANY offload dataset. Must be readable by the TSO user running the workflow. Used by steps 2 (SMF-30), 3 (RMF Postprocessor) and 4 (SMF-14/15). Prefer a recently offloaded (inactive) dataset: dumping the live recording dataset works but can produce in-flight-record warnings.</description>
+        <category>SMF</category>
+        <string><default>SYS1.ZOS32.MAN1</default></string>
+    </variable>
+
+    <variable name="MEASUREMENT_HOURS" scope="instance" visibility="public">
+        <label>Measurement Window (hours)</label>
+        <abstract>How many hours of SMF records to analyse, counting back from now</abstract>
+        <description>Whole number 1-168. 24 covers one full business day. 48 or 168 gives a more stable CPU-ratio picture across varying workload shapes. Enforced two ways: IFASMFDP DATE() day-level filtering at dump time, then record-level timestamp filtering in the analysis REXX.</description>
+        <category>SMF</category>
+        <string><default>24</default></string>
+    </variable>
+
+    <!-- ============================================================ -->
+    <!-- STEP 1 - SPOOL PRESSURE                                      -->
+    <!-- ============================================================ -->
+
+    <step name="spoolPressure">
+        <title>Spool Pressure Snapshot</title>
+        <description>Reads SDSF SP for per-volume utilisation and SDSF ST for the top-N job and owner consumers. Writes VERDICT and TOP_CONSUMER lines to WORKDIR/hc_spool.txt for the on-host report step.</description>
+        <variableValue name="WORKDIR" required="true"/>
+        <variableValue name="SPOOL_HIGH_WATER" required="true"/>
+        <variableValue name="TOP_N" required="true"/>
+        <instructions substitution="true">
+            This step measures how full the spool is and who is holding it.
+            <br/><br/>
+            It reads the SDSF SP panel for every spool volume, totals track groups
+            used vs available, and compares the result to the
+            ${instance-SPOOL_HIGH_WATER}% threshold. It then reads the SDSF ST
+            panel and lists the ${instance-TOP_N} largest jobs and owners.
+            <br/><br/>
+            The VERDICT and TOP_CONSUMER lines are echoed to the job log AND
+            written to <b>${instance-WORKDIR}/hc_spool.txt</b>, which the final
+            report step reads. If that file cannot be written the step still
+            completes (the report step will simply omit this axis).
+        </instructions>
+        <weight>3</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[/* REXX - Spool pressure: SP panel utilisation + ST panel consumers.  */
+/* VERDICT/TOP_CONSUMER lines are captured via EMIT and written to    */
+/* WORKDIR/hc_spool.txt by WRITEOUT for the on-host report step.      */
+SIGNAL ON NOVALUE NAME HANDLE_ERROR
+
+WORKDIR = '${instance-WORKDIR}'
+HIGHWM  = '${instance-SPOOL_HIGH_WATER}'
+TOPN    = '${instance-TOP_N}'
+OUT. = ''; OUT.0 = 0
+
+IF DATATYPE(HIGHWM,'N') = 0 THEN DO
+  SAY 'SPOOL_HIGH_WATER is not numeric:' HIGHWM; EXIT 12
+END
+IF DATATYPE(TOPN,'W') = 0 THEN DO
+  SAY 'TOP_N is not a whole number:' TOPN; EXIT 12
+END
+IF TOPN < 1 THEN DO
+  SAY 'TOP_N is not a positive integer:' TOPN; EXIT 12
+END
+
+X = ISFCALLS('ON')
+IF X <> 0 THEN DO; SAY 'ISFCALLS ON failed RC=' X; EXIT 12; END
+
+DEVNAME. = ''; STATUS. = ''; TGNUM. = 0; TGUSE. = 0; TGPCT. = 0
+
+ADDRESS SDSF "ISFEXEC SP"
+IF RC <> 0 THEN DO; SAY 'ISFEXEC SP failed RC=' RC; CALL BAIL 12; END
+
+IF WORDPOS('TGUSE',ISFCOLS) = 0 THEN DO
+  SAY 'ERROR: TGUSE missing from SDSF SP column set (' WORDS(ISFCOLS) 'cols).'
+  SAY 'Another SDSF panel was already used in this TSO address space.'
+  CALL BAIL 8
+END
+
+SAY COPIES('=',72)
+SAY 'SPOOL UTILISATION -' DATE('S') TIME()
+SAY COPIES('=',72)
+SAY LEFT('VOLUME',9) LEFT('STATUS',9) RIGHT('TG TOTAL',9) ,
+    RIGHT('TG USED',9) RIGHT('PCT',7)
+SAY COPIES('-',72)
+
+TOTTG = 0; USETG = 0
+DO I = 1 TO DEVNAME.0
+  TOTTG = TOTTG + TGNUM.I
+  USETG = USETG + TGUSE.I
+  SAY LEFT(DEVNAME.I,9) LEFT(STATUS.I,9) RIGHT(TGNUM.I,9) ,
+      RIGHT(TGUSE.I,9) RIGHT(TGPCT.I,6)'%'
+END
+
+IF TOTTG = 0 THEN DO
+  SAY 'No spool volumes reported track groups.'; CALL BAIL 8
+END
+
+PCT   = FORMAT(USETG * 100 / TOTTG,,2)
+AMBER = HIGHWM - 10
+SELECT
+  WHEN PCT >= HIGHWM THEN GRADE = 'RED'
+  WHEN PCT >= AMBER  THEN GRADE = 'AMBER'
+  OTHERWISE               GRADE = 'GREEN'
+END
+SAY COPIES('-',72)
+SAY 'Volumes:' DEVNAME.0 '  TG used:' USETG 'of' TOTTG
+SAY 'OVERALL SPOOL:' PCT'%    Threshold:' HIGHWM'%    Grade:' GRADE
+SAY COPIES('=',72)
+CALL EMIT 'VERDICT:SPOOL:'PCT':'HIGHWM':'GRADE
+
+JNAME. = ''; JOBID. = ''; OWNERID. = ''; QUEUE. = ''; TGNUM. = 0
+ISFOWNER = '*'
+ISFSORT  = 'TGNUM D'
+
+ADDRESS SDSF "ISFEXEC ST"
+IF RC <> 0 THEN DO; SAY 'ISFEXEC ST failed RC=' RC; CALL BAIL 12; END
+
+HAS_OWNER = (WORDPOS('OWNERID',ISFCOLS) > 0)
+HAS_JOBID = (WORDPOS('JOBID',  ISFCOLS) > 0)
+HAS_QUEUE = (WORDPOS('QUEUE',  ISFCOLS) > 0)
+IF \HAS_OWNER THEN SAY 'NOTE: OWNERID not in ST column set.'
+
+N = JNAME.0
+SAY ' '
+SAY 'TOP' TOPN 'JOBS BY SPOOL USAGE  (total jobs on spool:' N')'
+SAY COPIES('-',72)
+SAY LEFT('JOBNAME',9) LEFT('JOBID',9) LEFT('OWNER',9) LEFT('QUEUE',10) ,
+    RIGHT('TRK GRP',8) RIGHT('SPOOL%',7)
+SAY COPIES('-',72)
+
+JOBTG = 0
+DO I = 1 TO N; JOBTG = JOBTG + TGNUM.I; END
+
+DO K = 1 TO MIN(TOPN, N)
+  IF TGNUM.K = 0 THEN LEAVE
+  OWN = '(n/a)'; IF HAS_OWNER THEN OWN = OWNERID.K
+  IF OWN = '' THEN OWN = '(none)'
+  JID = '(n/a)'; IF HAS_JOBID THEN JID = JOBID.K
+  IF JID = '' THEN JID = '(none)'
+  SHARE = 0
+  IF JOBTG > 0 THEN SHARE = FORMAT(TGNUM.K * 100 / JOBTG,,1)
+  SAY LEFT(JNAME.K,9) LEFT(JID,9) LEFT(OWN,9) ,
+      LEFT(QUEUE.K,10) RIGHT(TGNUM.K,8) RIGHT(SHARE,6)'%'
+  CALL EMIT 'TOP_CONSUMER:SPOOL:'JNAME.K':'OWN':'SHARE'%'
+END
+
+CALL WRITEOUT 'spool'
+SAY COPIES('=',72)
+SAY 'SPOOL PRESSURE COMPLETE'
+CALL BAIL 0
+
+BAIL:
+  X = ISFCALLS('OFF')
+  EXIT ARG(1)
+
+EMIT:
+  L = ARG(1); SAY L
+  K2 = OUT.0 + 1; OUT.K2 = L; OUT.0 = K2
+  RETURN
+
+WRITEOUT:
+  FN = WORKDIR'/hc_'ARG(1)'.txt'
+  ADDRESS TSO "ALLOC FI(HCOUT) PATH('"FN"')" ,
+    "PATHOPTS(OWRONLY,OCREAT,OTRUNC) PATHMODE(SIRWXU) FILEDATA(TEXT)"
+  IF RC = 0 THEN DO
+    ADDRESS TSO "EXECIO" OUT.0 "DISKW HCOUT (STEM OUT. FINIS"
+    IF RC <> 0 THEN SAY 'WARN: EXECIO to' FN 'RC='RC
+    ADDRESS TSO "FREE FI(HCOUT)"
+  END
+  ELSE SAY 'WARN: could not open' FN 'RC='RC
+  RETURN
+
+HANDLE_ERROR:
+  SAY 'REXX NOVALUE at line' SIGL 'variable:' CONDITION('D')
+  EXIT 12
+]]></inlineTemplate>
+            <submitAs>TSO-REXX</submitAs>
+            <successPattern>SPOOL PRESSURE COMPLETE</successPattern>
+        </template>
+    </step>
+
+    <!-- ============================================================ -->
+    <!-- STEP 2 - CPU SHAPE (SMF-30)                                  -->
+    <!-- ============================================================ -->
+
+    <step name="cpuShapeAnalysis">
+        <title>CPU Shape Analysis (SMF-30)</title>
+        <description>Dumps SMF type-30 records with IFASMFDP (called from REXX), parses subtype-5 records using the offsets pinned by artifact 12, grades STC CPU/elapsed ratios, and writes VERDICT/TOP_CONSUMER lines to WORKDIR/hc_cpu.txt.</description>
+        <prereqStep name="spoolPressure"/>
+        <variableValue name="WORKDIR" required="true"/>
+        <variableValue name="SMF_INPUT_DSN" required="true"/>
+        <variableValue name="MEASUREMENT_HOURS" required="true"/>
+        <variableValue name="CPU_RATIO_RED" required="true"/>
+        <variableValue name="CPU_RATIO_AMBER" required="true"/>
+        <variableValue name="MIN_ELAPSED_HOURS" required="true"/>
+        <instructions substitution="true">
+            This step reads SMF type-30 subtype-5 (termination) records from
+            <b>${instance-SMF_INPUT_DSN}</b> for the last
+            <b>${instance-MEASUREMENT_HOURS} hours</b>, grades each started
+            task's CPU/elapsed ratio against the RED/AMBER thresholds, and
+            writes the result to <b>${instance-WORKDIR}/hc_cpu.txt</b>.
+            <br/><br/>
+            <b>Known limitation:</b> subtype-5 records are written at
+            termination, so an idle STC that never stops does not appear until
+            it is recycled. Look for <b>VERDICT:CPU:</b> in the job log.
+        </instructions>
+        <weight>5</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[/* REXX - CPU shape from SMF type-30 subtype-5 records.               */
+/* IFASMFDP is called from this exec (control cards to a temp SYSIN)  */
+/* because in-stream DD data hangs z/OSMF JCL submission. Offsets are */
+/* artifact-12 values minus 4 (EXECIO strips the RDW) plus 1 for      */
+/* 1-based SUBSTR. VERDICT/TOP_CONSUMER captured via EMIT, written to */
+/* WORKDIR/hc_cpu.txt by WRITEOUT for the on-host report step.        */
+SIGNAL ON NOVALUE NAME HANDLE_ERROR
+
+WORKDIR = '${instance-WORKDIR}'
+SMF_DSN = '${instance-SMF_INPUT_DSN}'
+WIN_HRS = '${instance-MEASUREMENT_HOURS}'
+RED_THR = '${instance-CPU_RATIO_RED}'
+AMB_THR = '${instance-CPU_RATIO_AMBER}'
+MIN_HRS = '${instance-MIN_ELAPSED_HOURS}'
+OUT. = ''; OUT.0 = 0
+
+IF DATATYPE(WIN_HRS,'W') = 0 THEN DO
+  SAY 'MEASUREMENT_HOURS must be a whole number:' WIN_HRS; EXIT 12
+END
+IF WIN_HRS < 1 THEN DO
+  SAY 'MEASUREMENT_HOURS must be at least 1:' WIN_HRS; EXIT 12
+END
+IF DATATYPE(RED_THR,'N') = 0 THEN DO
+  SAY 'CPU_RATIO_RED must be numeric:' RED_THR; EXIT 12
+END
+IF DATATYPE(AMB_THR,'N') = 0 THEN DO
+  SAY 'CPU_RATIO_AMBER must be numeric:' AMB_THR; EXIT 12
+END
+IF AMB_THR <= RED_THR THEN DO
+  SAY 'CPU_RATIO_AMBER must be greater than CPU_RATIO_RED.'; EXIT 12
+END
+IF DATATYPE(MIN_HRS,'N') = 0 THEN DO
+  SAY 'MIN_ELAPSED_HOURS must be numeric:' MIN_HRS; EXIT 12
+END
+
+SAY COPIES('=',72)
+SAY 'CPU SHAPE ANALYSIS (SMF-30 SUBTYPE 5) -' DATE('S') TIME()
+SAY 'Dataset:' SMF_DSN '  Window:' WIN_HRS 'hours'
+SAY COPIES('=',72)
+
+NOWABS = DATE('B') * 86400 + TIME('S')
+CUTOFF = NOWABS - WIN_HRS * 3600
+STARTJ = BASE2J(DATE('B') - (WIN_HRS % 24 + 1))
+ENDJ   = BASE2J(DATE('B'))
+
+ADDRESS TSO
+"ALLOC FI(SYSIN) NEW DELETE REUSE UNIT(SYSDA) SPACE(1,1) TRACKS" ,
+  "RECFM(F B) LRECL(80) BLKSIZE(3120)"
+IF RC <> 0 THEN DO; SAY 'ALLOC SYSIN failed RC=' RC; EXIT 12; END
+QUEUE '  INDD(DUMPIN,OPTIONS(DUMP))'
+QUEUE '  OUTDD(DUMPOUT,TYPE(30))'
+QUEUE '  DATE('STARTJ','ENDJ')'
+"EXECIO" QUEUED() "DISKW SYSIN (FINIS"
+IF RC <> 0 THEN DO
+  SAY 'Write of IFASMFDP control cards failed RC=' RC
+  CALL CLEANUP; EXIT 12
+END
+
+"ALLOC FI(DUMPIN) DA('"SMF_DSN"') SHR REUSE"
+IF RC <> 0 THEN DO
+  SAY 'ALLOC of' SMF_DSN 'failed RC=' RC
+  CALL CLEANUP; EXIT 12
+END
+"ALLOC FI(DUMPOUT) NEW DELETE REUSE UNIT(SYSDA)" ,
+  "SPACE(50,50) CYLINDERS" ,
+  "RECFM(V B S) LRECL(32760) BLKSIZE(27998)"
+IF RC <> 0 THEN DO
+  SAY 'ALLOC DUMPOUT failed RC=' RC; CALL CLEANUP; EXIT 12
+END
+"ALLOC FI(SYSPRINT) DA(*)"
+
+"CALL *(IFASMFDP)"
+DUMP_RC = RC
+IF DUMP_RC > 4 THEN DO
+  SAY 'IFASMFDP ended RC=' DUMP_RC; CALL CLEANUP; EXIT 12
+END
+
+SEEN. = 0; CPU. = 0; ELP. = 0
+STC_LIST = ''
+RECS = 0; KEPT = 0
+EOF  = 0
+
+DO WHILE EOF = 0
+  "EXECIO 500 DISKR DUMPOUT (STEM REC."
+  IO_RC = RC
+  IF IO_RC = 2 THEN EOF = 1
+  IF IO_RC <> 0 & IO_RC <> 2 THEN DO
+    SAY 'EXECIO DUMPOUT failed RC=' IO_RC; CALL CLEANUP; EXIT 12
+  END
+
+  DO I = 1 TO REC.0
+    REC  = REC.I
+    RECS = RECS + 1
+    IF LENGTH(REC) < 60 THEN ITERATE
+    IF C2D(SUBSTR(REC,2,1)) <> 30 THEN ITERATE
+    IF C2D(SUBSTR(REC,19,2)) <> 5 THEN ITERATE
+
+    RB = P2BASE(C2X(SUBSTR(REC,7,4)))
+    IF RB < 0 THEN ITERATE
+    RECABS = RB * 86400 + C2D(SUBSTR(REC,3,4)) % 100
+    IF RECABS < CUTOFF THEN ITERATE
+
+    IOFF = C2D(SUBSTR(REC,29,4)); ILEN = C2D(SUBSTR(REC,33,2))
+    ION  = C2D(SUBSTR(REC,35,2))
+    COFF = C2D(SUBSTR(REC,53,4)); CLEN = C2D(SUBSTR(REC,57,2))
+    CON  = C2D(SUBSTR(REC,59,2))
+    IF ION = 0 | CON = 0 THEN ITERATE
+    IF ILEN < 72 | CLEN < 12 THEN ITERATE
+    IF IOFF < 5 | COFF < 5 THEN ITERATE
+    IF IOFF - 4 + ILEN > LENGTH(REC) THEN ITERATE
+    IF COFF - 4 + CLEN > LENGTH(REC) THEN ITERATE
+    ID  = SUBSTR(REC, IOFF - 3, ILEN)
+    CAS = SUBSTR(REC, COFF - 3, CLEN)
+
+    JESID = STRIP(SUBSTR(ID,33,8))
+    IF LEFT(JESID,3) <> 'STC' THEN ITERATE
+    JN = STRIP(SUBSTR(ID,1,8))
+    IF JN = '' THEN ITERATE
+
+    SB = P2BASE(C2X(SUBSTR(ID,69,4)))
+    IF SB < 0 THEN ITERATE
+    STARTABS = SB * 86400 + C2D(SUBSTR(ID,65,4)) % 100
+    ELPSEC = RECABS - STARTABS
+    IF ELPSEC <= 0 THEN ITERATE
+
+    CPUSEC = (C2D(SUBSTR(CAS,5,4)) + C2D(SUBSTR(CAS,9,4))) / 100
+
+    IF SEEN.JN = 0 THEN DO
+      SEEN.JN = 1
+      STC_LIST = STC_LIST JN
+    END
+    CPU.JN = CPU.JN + CPUSEC
+    IF ELPSEC > ELP.JN THEN ELP.JN = ELPSEC
+    KEPT = KEPT + 1
+  END
+END
+"EXECIO 0 DISKR DUMPOUT (FINIS"
+
+SAY 'SMF records read:' RECS '  STC subtype-5 in window:' KEPT
+SAY ' '
+SAY LEFT('JOBNAME',9) RIGHT('CPU(s)',9) RIGHT('ELP(s)',9) ,
+    RIGHT('RATIO%',8) LEFT('GRADE',7)
+SAY COPIES('-',72)
+
+WORST = ''; WORSTVAL = ''; GRADED = 0
+DO J = 1 TO WORDS(STC_LIST)
+  JN = WORD(STC_LIST,J)
+  IF ELP.JN < MIN_HRS * 3600 THEN ITERATE
+  RATIO = FORMAT(CPU.JN * 100 / ELP.JN,,2)
+  SELECT
+    WHEN RATIO < RED_THR THEN GRADE = 'RED'
+    WHEN RATIO < AMB_THR THEN GRADE = 'AMBER'
+    OTHERWISE                  GRADE = 'GREEN'
+  END
+  GRADED = GRADED + 1
+  IF WORSTVAL = '' THEN WORSTVAL = RATIO
+  IF RATIO < WORSTVAL THEN WORSTVAL = RATIO
+  IF GRADE = 'RED' THEN WORST = 'RED'
+  IF GRADE = 'AMBER' & WORST <> 'RED' THEN WORST = 'AMBER'
+  IF GRADE = 'GREEN' & WORST = '' THEN WORST = 'GREEN'
+  SAY LEFT(JN,9) RIGHT(FORMAT(CPU.JN,,1),9) ,
+      RIGHT(FORMAT(ELP.JN,,1),9) RIGHT(RATIO,7)'%' LEFT(GRADE,7)
+  CALL EMIT 'TOP_CONSUMER:CPU:'JN':'RATIO'% ('GRADE')'
+END
+
+SAY COPIES('=',72)
+IF GRADED = 0 THEN DO
+  SAY 'No STC met the' MIN_HRS'-hour elapsed minimum in the window.'
+  CALL EMIT 'VERDICT:CPU:0:'RED_THR':UNKNOWN'
+END
+ELSE DO
+  SAY 'STCs graded:' GRADED '  Worst grade:' WORST
+  CALL EMIT 'VERDICT:CPU:'WORSTVAL':'RED_THR':'WORST
+END
+CALL WRITEOUT 'cpu'
+SAY 'CPU SHAPE ANALYSIS COMPLETE'
+CALL CLEANUP
+EXIT 0
+
+CLEANUP:
+  ADDRESS TSO "FREE FI(DUMPIN DUMPOUT SYSIN SYSPRINT)"
+  RETURN
+
+EMIT:
+  L = ARG(1); SAY L
+  K2 = OUT.0 + 1; OUT.K2 = L; OUT.0 = K2
+  RETURN
+
+WRITEOUT:
+  FN = WORKDIR'/hc_'ARG(1)'.txt'
+  ADDRESS TSO "ALLOC FI(HCOUT) PATH('"FN"')" ,
+    "PATHOPTS(OWRONLY,OCREAT,OTRUNC) PATHMODE(SIRWXU) FILEDATA(TEXT)"
+  IF RC = 0 THEN DO
+    ADDRESS TSO "EXECIO" OUT.0 "DISKW HCOUT (STEM OUT. FINIS"
+    IF RC <> 0 THEN SAY 'WARN: EXECIO to' FN 'RC='RC
+    ADDRESS TSO "FREE FI(HCOUT)"
+  END
+  ELSE SAY 'WARN: could not open' FN 'RC='RC
+  RETURN
+
+BASE2J: PROCEDURE
+  ARG B .
+  S   = DATE('S', B, 'B')
+  YR  = LEFT(S,4)
+  DDD = B - DATE('B', YR'0101', 'S') + 1
+  RETURN YR || RIGHT(DDD, 3, '0')
+
+P2BASE: PROCEDURE
+  ARG H .
+  IF LENGTH(H) <> 8 THEN RETURN -1
+  IF SUBSTR(H,8,1) <> 'F' THEN RETURN -1
+  IF DATATYPE(SUBSTR(H,1,7),'W') = 0 THEN RETURN -1
+  C   = SUBSTR(H,2,1)
+  YY  = SUBSTR(H,3,2)
+  DDD = SUBSTR(H,5,3)
+  IF DDD < 1 | DDD > 366 THEN RETURN -1
+  YR = 1900 + C * 100 + YY
+  RETURN DATE('B', YR'0101', 'S') + DDD - 1
+
+HANDLE_ERROR:
+  SAY 'REXX NOVALUE at line' SIGL 'variable:' CONDITION('D')
+  EXIT 12
+]]></inlineTemplate>
+            <submitAs>TSO-REXX</submitAs>
+            <successPattern>CPU SHAPE ANALYSIS COMPLETE</successPattern>
+        </template>
+    </step>
+
+    <!-- ============================================================ -->
+    <!-- STEP 3 - MEMORY AND PAGING (RMF POSTPROCESSOR)              -->
+    <!-- ============================================================ -->
+
+    <step name="memoryPaging">
+        <title>Memory and Paging Health (RMF Summary)</title>
+        <description>Runs the RMF Postprocessor (ERBRMFPP) and parses the DEMAND PAGING column of the Summary report. Degrades to UNKNOWN if RMF is unavailable. Writes VERDICT to WORKDIR/hc_memory.txt.</description>
+        <prereqStep name="cpuShapeAnalysis"/>
+        <variableValue name="WORKDIR" required="true"/>
+        <variableValue name="SMF_INPUT_DSN" required="true"/>
+        <variableValue name="MEASUREMENT_HOURS" required="true"/>
+        <variableValue name="PGRATE_RED" required="true"/>
+        <variableValue name="PGRATE_AMBER" required="true"/>
+        <instructions substitution="true">
+            This step runs the RMF Postprocessor over
+            <b>${instance-SMF_INPUT_DSN}</b> with SUMMARY(INT,TOT) and averages
+            the DEMAND PAGING column, writing the grade to
+            <b>${instance-WORKDIR}/hc_memory.txt</b>. If ERBRMFPP is unavailable
+            or the report cannot be parsed, the axis is graded UNKNOWN and the
+            step still completes. Look for <b>VERDICT:MEMORY:</b> in the log.
+        </instructions>
+        <weight>4</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[/* REXX - Memory/paging health via the RMF Postprocessor Summary.     */
+/* ERBRMFPP is called from this exec (control cards to a temp SYSIN). */
+/* RMF/parse failures degrade to VERDICT ... UNKNOWN. Captured via    */
+/* EMIT, written to WORKDIR/hc_memory.txt by WRITEOUT.                */
+SIGNAL ON NOVALUE NAME HANDLE_ERROR
+
+WORKDIR = '${instance-WORKDIR}'
+SMF_DSN = '${instance-SMF_INPUT_DSN}'
+WIN_HRS = '${instance-MEASUREMENT_HOURS}'
+RED_THR = '${instance-PGRATE_RED}'
+AMB_THR = '${instance-PGRATE_AMBER}'
+OUT. = ''; OUT.0 = 0
+
+IF DATATYPE(RED_THR,'N') = 0 | DATATYPE(AMB_THR,'N') = 0 THEN DO
+  SAY 'Paging thresholds must be numeric.'; EXIT 12
+END
+IF AMB_THR >= RED_THR THEN DO
+  SAY 'PGRATE_AMBER must be less than PGRATE_RED.'; EXIT 12
+END
+
+SAY COPIES('=',72)
+SAY 'MEMORY / PAGING HEALTH (RMF SUMMARY) -' DATE('S') TIME()
+SAY 'Dataset:' SMF_DSN '  Window hint:' WIN_HRS 'hours'
+SAY COPIES('=',72)
+
+PGRATE = ''
+
+ADDRESS TSO
+"ALLOC FI(SYSIN) NEW DELETE REUSE UNIT(SYSDA) SPACE(1,1) TRACKS" ,
+  "RECFM(F B) LRECL(80) BLKSIZE(3120)"
+IF RC <> 0 THEN DO; SAY 'ALLOC SYSIN failed RC=' RC; EXIT 12; END
+QUEUE '  SUMMARY(INT,TOT)'
+"EXECIO" QUEUED() "DISKW SYSIN (FINIS"
+IF RC <> 0 THEN DO
+  SAY 'Write of ERBRMFPP control cards failed RC=' RC
+  CALL CLEANUP; EXIT 12
+END
+
+"ALLOC FI(MFPINPUT) DA('"SMF_DSN"') SHR REUSE"
+IF RC <> 0 THEN DO
+  SAY 'ALLOC of' SMF_DSN 'failed RC=' RC
+  CALL CLEANUP; EXIT 12
+END
+"ALLOC FI(SYSOUT) NEW DELETE REUSE UNIT(SYSDA) SPACE(15,15) TRACKS" ,
+  "RECFM(F B A) LRECL(133) BLKSIZE(13300)"
+IF RC <> 0 THEN DO
+  SAY 'ALLOC SYSOUT failed RC=' RC; CALL CLEANUP; EXIT 12
+END
+"ALLOC FI(MFPMSGDS) DA(*)"
+
+"CALL *(ERBRMFPP)"
+PP_RC = RC
+SAY 'ERBRMFPP ended RC=' PP_RC
+
+IF PP_RC <= 4 THEN DO
+  "EXECIO * DISKR SYSOUT (STEM RPT. FINIS"
+  IF RC = 0 THEN DO
+    COLP = 0; NVAL = 0; SUMV = 0
+    DO I = 1 TO RPT.0
+      IF COLP = 0 THEN DO
+        P = POS('PAGING', RPT.I)
+        IF P > 0 THEN COLP = P
+        ITERATE
+      END
+      IF POS('TOTAL', RPT.I) > 0 THEN ITERATE
+      V = STRIP(SUBSTR(RPT.I, MAX(1, COLP - 1), 8))
+      IF DATATYPE(V,'N') THEN DO
+        NVAL = NVAL + 1
+        SUMV = SUMV + V
+      END
+    END
+    IF NVAL > 0 THEN PGRATE = FORMAT(SUMV / NVAL,,2)
+    ELSE SAY 'No numeric DEMAND PAGING values found.'
+  END
+  ELSE SAY 'EXECIO of the report failed RC=' RC
+END
+ELSE SAY 'RMF may not be installed/active on this system.'
+
+IF PGRATE = '' THEN DO
+  SAY 'Paging rate could not be determined.'
+  CALL EMIT 'VERDICT:MEMORY:0:'AMB_THR':UNKNOWN'
+END
+ELSE DO
+  SELECT
+    WHEN PGRATE >= RED_THR THEN GRADE = 'RED'
+    WHEN PGRATE >= AMB_THR THEN GRADE = 'AMBER'
+    OTHERWISE                    GRADE = 'GREEN'
+  END
+  SAY 'Average demand paging rate:' PGRATE '/sec    Grade:' GRADE
+  CALL EMIT 'VERDICT:MEMORY:'PGRATE':'AMB_THR':'GRADE
+END
+CALL WRITEOUT 'memory'
+SAY 'MEMORY PAGING HEALTH COMPLETE'
+CALL CLEANUP
+EXIT 0
+
+CLEANUP:
+  ADDRESS TSO "FREE FI(MFPINPUT SYSOUT SYSIN MFPMSGDS)"
+  RETURN
+
+EMIT:
+  L = ARG(1); SAY L
+  K2 = OUT.0 + 1; OUT.K2 = L; OUT.0 = K2
+  RETURN
+
+WRITEOUT:
+  FN = WORKDIR'/hc_'ARG(1)'.txt'
+  ADDRESS TSO "ALLOC FI(HCOUT) PATH('"FN"')" ,
+    "PATHOPTS(OWRONLY,OCREAT,OTRUNC) PATHMODE(SIRWXU) FILEDATA(TEXT)"
+  IF RC = 0 THEN DO
+    ADDRESS TSO "EXECIO" OUT.0 "DISKW HCOUT (STEM OUT. FINIS"
+    IF RC <> 0 THEN SAY 'WARN: EXECIO to' FN 'RC='RC
+    ADDRESS TSO "FREE FI(HCOUT)"
+  END
+  ELSE SAY 'WARN: could not open' FN 'RC='RC
+  RETURN
+
+HANDLE_ERROR:
+  SAY 'REXX NOVALUE at line' SIGL 'variable:' CONDITION('D')
+  EXIT 12
+]]></inlineTemplate>
+            <submitAs>TSO-REXX</submitAs>
+            <successPattern>MEMORY PAGING HEALTH COMPLETE</successPattern>
+        </template>
+    </step>
+
+    <!-- ============================================================ -->
+    <!-- STEP 4 - DATASET I/O HOTSPOTS (SMF-14/15)                   -->
+    <!-- ============================================================ -->
+
+    <step name="datasetHotspots">
+        <title>Dataset I/O Hotspot Scan (SMF-14/15)</title>
+        <description>Dumps SMF type-14/15 records with IFASMFDP (called from REXX), ranks datasets by open frequency in the window (JFCB dataset name at record offset 68, RDW-inclusive), and writes VERDICT/TOP_CONSUMER lines to WORKDIR/hc_dataset.txt.</description>
+        <prereqStep name="memoryPaging"/>
+        <variableValue name="WORKDIR" required="true"/>
+        <variableValue name="SMF_INPUT_DSN" required="true"/>
+        <variableValue name="TOP_N" required="true"/>
+        <variableValue name="MEASUREMENT_HOURS" required="true"/>
+        <instructions substitution="true">
+            This step counts dataset opens over the last
+            ${instance-MEASUREMENT_HOURS} hours from SMF type-14/15 records in
+            <b>${instance-SMF_INPUT_DSN}</b>, lists the ${instance-TOP_N}
+            busiest datasets, and writes the result to
+            <b>${instance-WORKDIR}/hc_dataset.txt</b>. AMBER above 500 opens/hr,
+            RED above 2000. Look for <b>VERDICT:DATASET_IO:</b> in the log.
+        </instructions>
+        <weight>4</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[/* REXX - Dataset I/O hotspots from SMF type-14/15 records.           */
+/* IFASMFDP called from this exec. Dataset name = JFCBDSNM at 65,44   */
+/* (RDW stripped). Captured via EMIT, written to WORKDIR/hc_dataset.  */
+SIGNAL ON NOVALUE NAME HANDLE_ERROR
+
+WORKDIR = '${instance-WORKDIR}'
+SMF_DSN = '${instance-SMF_INPUT_DSN}'
+WIN_HRS = '${instance-MEASUREMENT_HOURS}'
+TOPN    = '${instance-TOP_N}'
+OUT. = ''; OUT.0 = 0
+
+IF DATATYPE(WIN_HRS,'W') = 0 THEN DO
+  SAY 'MEASUREMENT_HOURS must be a whole number:' WIN_HRS; EXIT 12
+END
+IF WIN_HRS < 1 THEN DO
+  SAY 'MEASUREMENT_HOURS must be at least 1:' WIN_HRS; EXIT 12
+END
+IF DATATYPE(TOPN,'W') = 0 THEN DO
+  SAY 'TOP_N must be a whole number:' TOPN; EXIT 12
+END
+IF TOPN < 1 THEN DO
+  SAY 'TOP_N must be a positive integer:' TOPN; EXIT 12
+END
+
+SAY COPIES('=',72)
+SAY 'DATASET I/O HOTSPOTS (SMF-14/15) -' DATE('S') TIME()
+SAY 'Dataset:' SMF_DSN '  Window:' WIN_HRS 'hours  Top N:' TOPN
+SAY COPIES('=',72)
+
+NOWABS = DATE('B') * 86400 + TIME('S')
+CUTOFF = NOWABS - WIN_HRS * 3600
+STARTJ = BASE2J(DATE('B') - (WIN_HRS % 24 + 1))
+ENDJ   = BASE2J(DATE('B'))
+
+ADDRESS TSO
+"ALLOC FI(SYSIN) NEW DELETE REUSE UNIT(SYSDA) SPACE(1,1) TRACKS" ,
+  "RECFM(F B) LRECL(80) BLKSIZE(3120)"
+IF RC <> 0 THEN DO; SAY 'ALLOC SYSIN failed RC=' RC; EXIT 12; END
+QUEUE '  INDD(DUMPIN,OPTIONS(DUMP))'
+QUEUE '  OUTDD(DUMPOUT,TYPE(14,15))'
+QUEUE '  DATE('STARTJ','ENDJ')'
+"EXECIO" QUEUED() "DISKW SYSIN (FINIS"
+IF RC <> 0 THEN DO
+  SAY 'Write of IFASMFDP control cards failed RC=' RC
+  CALL CLEANUP; EXIT 12
+END
+
+"ALLOC FI(DUMPIN) DA('"SMF_DSN"') SHR REUSE"
+IF RC <> 0 THEN DO
+  SAY 'ALLOC of' SMF_DSN 'failed RC=' RC
+  CALL CLEANUP; EXIT 12
+END
+"ALLOC FI(DUMPOUT) NEW DELETE REUSE UNIT(SYSDA)" ,
+  "SPACE(50,50) CYLINDERS" ,
+  "RECFM(V B S) LRECL(32760) BLKSIZE(27998)"
+IF RC <> 0 THEN DO
+  SAY 'ALLOC DUMPOUT failed RC=' RC; CALL CLEANUP; EXIT 12
+END
+"ALLOC FI(SYSPRINT) DA(*)"
+
+"CALL *(IFASMFDP)"
+DUMP_RC = RC
+IF DUMP_RC > 4 THEN DO
+  SAY 'IFASMFDP ended RC=' DUMP_RC; CALL CLEANUP; EXIT 12
+END
+
+OK = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$#@.-'
+OPENS.  = 0
+DSNLIST = ''
+TOTAL   = 0
+EOF     = 0
+
+DO WHILE EOF = 0
+  "EXECIO 500 DISKR DUMPOUT (STEM REC."
+  IO_RC = RC
+  IF IO_RC = 2 THEN EOF = 1
+  IF IO_RC <> 0 & IO_RC <> 2 THEN DO
+    SAY 'EXECIO DUMPOUT failed RC=' IO_RC; CALL CLEANUP; EXIT 12
+  END
+
+  DO I = 1 TO REC.0
+    REC = REC.I
+    IF LENGTH(REC) < 108 THEN ITERATE
+    T = C2D(SUBSTR(REC,2,1))
+    IF T <> 14 & T <> 15 THEN ITERATE
+
+    RB = P2BASE(C2X(SUBSTR(REC,7,4)))
+    IF RB < 0 THEN ITERATE
+    RECABS = RB * 86400 + C2D(SUBSTR(REC,3,4)) % 100
+    IF RECABS < CUTOFF THEN ITERATE
+
+    DSN = STRIP(SUBSTR(REC,65,44))
+    IF DSN = '' THEN ITERATE
+    IF LEFT(DSN,1) = '&' THEN ITERATE
+    IF POS('NULLFILE',DSN) > 0 THEN ITERATE
+    IF VERIFY(DSN, OK) <> 0 THEN ITERATE
+
+    IF OPENS.DSN = 0 THEN DSNLIST = DSNLIST DSN
+    OPENS.DSN = OPENS.DSN + 1
+    TOTAL = TOTAL + 1
+  END
+END
+"EXECIO 0 DISKR DUMPOUT (FINIS"
+
+SAY 'SMF-14/15 records in window:' TOTAL
+SAY 'Distinct datasets seen:' WORDS(DSNLIST)
+SAY ' '
+SAY 'TOP' TOPN 'DATASETS BY OPEN COUNT'
+SAY COPIES('-',72)
+SAY LEFT('DATASET',44) RIGHT('OPENS',8) RIGHT('OPENS/HR',10)
+SAY COPIES('-',72)
+
+WORST_RATE = 0
+DONE. = 0
+
+DO K = 1 TO TOPN
+  BEST = -1; BESTD = ''
+  DO J = 1 TO WORDS(DSNLIST)
+    D = WORD(DSNLIST,J)
+    IF DONE.D = 1 THEN ITERATE
+    IF OPENS.D > BEST THEN DO; BEST = OPENS.D; BESTD = D; END
+  END
+  IF BESTD = '' | OPENS.BESTD = 0 THEN LEAVE
+  DONE.BESTD = 1
+  RATE = FORMAT(OPENS.BESTD / WIN_HRS,,0)
+  IF RATE > WORST_RATE THEN WORST_RATE = RATE
+  SAY LEFT(BESTD,44) RIGHT(OPENS.BESTD,8) RIGHT(RATE,9)'/hr'
+  CALL EMIT 'TOP_CONSUMER:DATASET:'BESTD':'OPENS.BESTD 'opens,' RATE'/hr'
+END
+
+SELECT
+  WHEN WORST_RATE >= 2000 THEN GRADE = 'RED'
+  WHEN WORST_RATE >= 500  THEN GRADE = 'AMBER'
+  OTHERWISE                    GRADE = 'GREEN'
+END
+
+SAY COPIES('=',72)
+SAY 'Highest open rate:' WORST_RATE 'opens/hr    Grade:' GRADE
+CALL EMIT 'VERDICT:DATASET_IO:'WORST_RATE':500:'GRADE
+CALL WRITEOUT 'dataset'
+SAY 'DATASET HOTSPOT SCAN COMPLETE'
+CALL CLEANUP
+EXIT 0
+
+CLEANUP:
+  ADDRESS TSO "FREE FI(DUMPIN DUMPOUT SYSIN SYSPRINT)"
+  RETURN
+
+EMIT:
+  L = ARG(1); SAY L
+  K2 = OUT.0 + 1; OUT.K2 = L; OUT.0 = K2
+  RETURN
+
+WRITEOUT:
+  FN = WORKDIR'/hc_'ARG(1)'.txt'
+  ADDRESS TSO "ALLOC FI(HCOUT) PATH('"FN"')" ,
+    "PATHOPTS(OWRONLY,OCREAT,OTRUNC) PATHMODE(SIRWXU) FILEDATA(TEXT)"
+  IF RC = 0 THEN DO
+    ADDRESS TSO "EXECIO" OUT.0 "DISKW HCOUT (STEM OUT. FINIS"
+    IF RC <> 0 THEN SAY 'WARN: EXECIO to' FN 'RC='RC
+    ADDRESS TSO "FREE FI(HCOUT)"
+  END
+  ELSE SAY 'WARN: could not open' FN 'RC='RC
+  RETURN
+
+BASE2J: PROCEDURE
+  ARG B .
+  S   = DATE('S', B, 'B')
+  YR  = LEFT(S,4)
+  DDD = B - DATE('B', YR'0101', 'S') + 1
+  RETURN YR || RIGHT(DDD, 3, '0')
+
+P2BASE: PROCEDURE
+  ARG H .
+  IF LENGTH(H) <> 8 THEN RETURN -1
+  IF SUBSTR(H,8,1) <> 'F' THEN RETURN -1
+  IF DATATYPE(SUBSTR(H,1,7),'W') = 0 THEN RETURN -1
+  C   = SUBSTR(H,2,1)
+  YY  = SUBSTR(H,3,2)
+  DDD = SUBSTR(H,5,3)
+  IF DDD < 1 | DDD > 366 THEN RETURN -1
+  YR = 1900 + C * 100 + YY
+  RETURN DATE('B', YR'0101', 'S') + DDD - 1
+
+HANDLE_ERROR:
+  SAY 'REXX NOVALUE at line' SIGL 'variable:' CONDITION('D')
+  EXIT 12
+]]></inlineTemplate>
+            <submitAs>TSO-REXX</submitAs>
+            <successPattern>DATASET HOTSPOT SCAN COMPLETE</successPattern>
+        </template>
+    </step>
+
+    <!-- ============================================================ -->
+    <!-- STEP 5 - RENDER HTML REPORT ON-HOST                          -->
+    <!-- ============================================================ -->
+
+    <step name="renderReport">
+        <title>Render HTML Health Report</title>
+        <description>Concatenates the collectors' hc_*.txt files, converts them from EBCDIC to UTF-8, and runs generate_report.py (IBM Open Enterprise Python) to write zos_health_report.html directly into the USS work directory. This step is what makes the report appear automatically when the workflow finishes.</description>
+        <prereqStep name="datasetHotspots"/>
+        <variableValue name="WORKDIR" required="true"/>
+        <variableValue name="PYTHON3" required="true"/>
+        <instructions substitution="true">
+            This final step renders the HTML scorecard on the host, so the
+            report exists the moment the workflow completes - no workstation
+            collection needed.
+            <br/><br/>
+            It concatenates <b>${instance-WORKDIR}/hc_*.txt</b> (written by the
+            four collector steps), converts EBCDIC to UTF-8 with iconv, and runs
+            <code>python3 generate_report.py</code> to produce
+            <b>${instance-WORKDIR}/zos_health_report.html</b>.
+            <br/><br/>
+            <b>Prerequisite:</b> generate_report.py must already be in
+            ${instance-WORKDIR}, and python3 (IBM Open Enterprise SDK for
+            Python) must be on PATH. The step fails (nonzero RC) if the report
+            cannot be produced.
+            <br/><br/>
+            Download the result with:
+            <code>zowe zos-files download uss-file
+            "${instance-WORKDIR}/zos_health_report.html" -f report.html</code>
+        </instructions>
+        <weight>1</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true">#!/bin/sh
+WORKDIR="${instance-WORKDIR}"
+PYTHON="${instance-PYTHON3}"
+PY="$WORKDIR/generate_report.py"
+SRC="$WORKDIR/verdicts_ebcdic.txt"
+TXT="$WORKDIR/verdicts.txt"
+HTML="$WORKDIR/zos_health_report.html"
+
+echo "Rendering z/OS Health Check report from $WORKDIR"
+
+if [ ! -x "$PYTHON" ]; then
+  echo "ERROR: python3 not found/executable at $PYTHON"
+  echo "Set the PYTHON3 workflow variable to your IBM Python path."
+  exit 8
+fi
+if [ ! -f "$PY" ]; then
+  echo "ERROR: generate_report.py not found in $WORKDIR"
+  echo "Upload it once: zowe zos-files upload file-to-uss scripts/generate_report.py $PY"
+  exit 8
+fi
+
+# Collectors write EBCDIC (IBM-1047) text files. Concatenate, convert to
+# UTF-8, and TAG the result to match its bytes - otherwise IBM Python
+# honors an inherited IBM-1047 tag and EBCDIC-decodes the ASCII bytes.
+cat "$WORKDIR"/hc_*.txt > "$SRC" 2>/dev/null
+if [ ! -s "$SRC" ]; then
+  echo "ERROR: no collector output (hc_*.txt) found in $WORKDIR"
+  exit 8
+fi
+
+iconv -f IBM-1047 -t UTF-8 "$SRC" > "$TXT" 2>/dev/null || cp "$SRC" "$TXT"
+chtag -t -c ISO8859-1 "$TXT"
+
+echo "VERDICT lines collected:"
+grep VERDICT: "$TXT" || echo "  (none - check the collector steps)"
+
+"$PYTHON" "$PY" --input "$TXT" --output "$HTML"
+RC=$?
+if [ $RC -ne 0 ]; then
+  echo "ERROR: generate_report.py failed RC=$RC"
+  exit $RC
+fi
+chtag -t -c ISO8859-1 "$HTML"
+
+echo "Report written to $HTML"
+echo "HEALTH SCORECARD COMPLETE"</inlineTemplate>
+            <submitAs>shell-JCL</submitAs>
+            <maxLrecl>1024</maxLrecl>
+        </template>
+    </step>
+
+</workflow>

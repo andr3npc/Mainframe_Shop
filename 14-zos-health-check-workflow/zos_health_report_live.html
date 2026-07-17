@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>z/OS Health Check &mdash; 2026-07-16 21:55</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  background: #f4f4f4;
+  color: #161616;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.topbar {
+  background: #161616;
+  color: #ffffff;
+  height: 48px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  font-size: 14px;
+}
+.topbar .prod { letter-spacing: .01em; }
+.topbar .prod b { font-weight: 600; margin-right: 6px; }
+.topbar .ctx { color: #c6c6c6; font-size: 12px; }
+.page { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
+.hero {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  padding: 32px;
+  margin: 24px 0 32px;
+}
+.eyebrow {
+  font-size: 12px;
+  letter-spacing: .02em;
+  color: #0f62fe;
+  margin-bottom: 12px;
+}
+.title {
+  font-size: 28px;
+  font-weight: 400;
+  color: #161616;
+  margin-bottom: 8px;
+  line-height: 1.25;
+}
+.subtitle { color: #525252; margin-bottom: 24px; font-size: 13px; }
+.meta-row { display: flex; gap: 32px; flex-wrap: wrap; }
+.meta-item { border-left: 3px solid #0f62fe; padding-left: 12px; }
+.meta-num { font-size: 24px; font-weight: 400; color: #161616; line-height: 1.2; }
+.meta-label { font-size: 12px; color: #525252; }
+.section { margin-bottom: 40px; }
+.section-hdr {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 16px;
+}
+.section-tag {
+  font-size: 11px; letter-spacing: .02em;
+  color: #393939; background: #e0e0e0;
+  padding: 2px 10px; border-radius: 12px;
+}
+.section-title { font-size: 16px; font-weight: 600; color: #161616; }
+.axis-card {
+  background: #ffffff; border: 1px solid #e0e0e0;
+  padding: 16px 20px; margin-bottom: 12px;
+}
+.axis-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.axis-name { font-size: 15px; font-weight: 600; color: #161616; margin-bottom: 2px; }
+.axis-reading { font-size: 12px; color: #525252; }
+.axis-gauge { margin: 10px 0 4px; }
+.consumers { margin-top: 12px; }
+.consumer-row {
+  display: flex; justify-content: space-between;
+  font-size: 12px; color: #525252;
+  border-top: 1px solid #e0e0e0; padding: 6px 0;
+}
+.consumer-name { color: #0f62fe; font-family: "IBM Plex Mono", monospace; }
+.consumer-metric { color: #161616; }
+.actions { list-style: none; }
+.actions li {
+  padding: 8px 0 8px 18px;
+  border-bottom: 1px solid #e0e0e0;
+  position: relative;
+  font-size: 13px;
+  color: #161616;
+}
+.actions li:last-child { border-bottom: none; }
+.actions li::before {
+  content: '>';
+  position: absolute; left: 2px;
+  color: #0f62fe; font-weight: 600;
+}
+.actions li.red-action::before { color: #da1e28; }
+.actions li.amber-action::before { color: #8e6a00; }
+.no-findings { color: #525252; font-size: 13px; font-style: italic; }
+.footer {
+  margin-top: 48px; padding-top: 16px;
+  border-top: 1px solid #e0e0e0;
+  text-align: center; font-size: 12px; color: #6f6f6f;
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="prod"><b>IBM</b>z/OS Management Facility</span>
+  <span class="ctx">Health Check Report</span>
+</div>
+<div class="page">
+
+  <div class="hero">
+    <div class="eyebrow">z/OS Health Check &middot; 2026-07-16 21:55</div>
+    <div class="title">System Health<br>Scorecard</div>
+    <div class="subtitle">Source: /z/andre/hc_work/verdicts.txt</div>
+    <div class="meta-row">
+      <div class="meta-item">
+        <div class="meta-num">4</div>
+        <div class="meta-label">axes measured</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-num">0</div>
+        <div class="meta-label">red findings</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-num">0</div>
+        <div class="meta-label">amber findings</div>
+      </div>
+      <div class="meta-item">
+        <div style="margin-bottom:6px"><span style="font-size:22px;font-weight:600;color:#0e6027;background:#a7f0ba;padding:6px 24px;border-radius:20px;letter-spacing:.02em">GREEN</span></div>
+        <div class="meta-label">overall grade</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-hdr">
+      <span class="section-tag">Scorecard</span>
+      <span class="section-title">Health Axes</span>
+    </div>
+    
+<div class="axis-card" style="border-left:3px solid #198038">
+  <div class="axis-top">
+    <div>
+      <div class="axis-name">Spool Utilisation</div>
+      <div class="axis-reading">47.81%  &amp;middot;  threshold 80%</div>
+    </div>
+    <div><span style="display:inline-block;padding:2px 12px;border-radius:12px;font-size:12px;font-weight:600;letter-spacing:.02em;background:#a7f0ba;color:#0e6027">GREEN</span></div>
+  </div>
+  <div class="axis-gauge"><div style="display:flex;gap:40px;align-items:center;flex-wrap:wrap"><svg width="132" height="132" role="img">
+  <title>value 47.81%, threshold 80%, grade GREEN</title>
+  <circle cx="66.0" cy="66.0" r="50.0" fill="none" stroke="#e0e0e0" stroke-width="14"/>
+  <circle cx="66.0" cy="66.0" r="50.0" fill="none" stroke="#24a148" stroke-width="14"
+          stroke-dasharray="150.2 314.2" transform="rotate(-90 66.0 66.0)"/>
+  <line x1="27.0" y1="53.3" x2="9.9" y2="47.8"
+        stroke="#161616" stroke-width="2"/>
+  <text x="66.0" y="73.0" text-anchor="middle"
+        font-size="20" font-weight="600" fill="#161616"
+        font-family="IBM Plex Sans, Helvetica Neue, Arial, sans-serif">47.81%</text>
+</svg><svg width="132" height="132" role="img"><path d="M66.0,66.0 L66.0,4.0 A62.0,62.0 0 0 1 97.9,12.8 Z" fill="#6929c4" stroke="#ffffff" stroke-width="2"><title>IZUJOSH 8.6%</title></path><path d="M66.0,66.0 L97.9,12.8 A62.0,62.0 0 0 1 112.0,24.4 Z" fill="#1192e8" stroke="#ffffff" stroke-width="2"><title>DFSMSHSM 4.7%</title></path><path d="M66.0,66.0 L112.0,24.4 A62.0,62.0 0 0 1 118.8,33.4 Z" fill="#198038" stroke="#ffffff" stroke-width="2"><title>ZGCCRCF2 2.9%</title></path><path d="M66.0,66.0 L118.8,33.4 A62.0,62.0 0 0 1 123.2,42.1 Z" fill="#9f1853" stroke="#ffffff" stroke-width="2"><title>OLGA1 2.5%</title></path><path d="M66.0,66.0 L123.2,42.1 A62.0,62.0 0 0 1 125.6,49.1 Z" fill="#b28600" stroke="#ffffff" stroke-width="2"><title>DFRMMHKP 1.9%</title></path><path d="M66.0,66.0 L125.6,49.1 A62.0,62.0 0 1 1 66.0,4.0 Z" fill="#8d8d8d" stroke="#ffffff" stroke-width="2"><title>Other 79.4%</title></path></svg></div><div style="font-size:11px;color:#525252">spool used vs threshold &middot; consumer share</div></div>
+  <div class="consumers"><div class="consumer-row"><span class="consumer-name"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#6929c4;margin-right:8px"></span>IZUJOSH</span><span class="consumer-metric">(n/a):8.6%</span></div><div class="consumer-row"><span class="consumer-name"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1192e8;margin-right:8px"></span>DFSMSHSM</span><span class="consumer-metric">(n/a):4.7%</span></div><div class="consumer-row"><span class="consumer-name"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#198038;margin-right:8px"></span>ZGCCRCF2</span><span class="consumer-metric">(n/a):2.9%</span></div><div class="consumer-row"><span class="consumer-name"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#9f1853;margin-right:8px"></span>OLGA1</span><span class="consumer-metric">(n/a):2.5%</span></div><div class="consumer-row"><span class="consumer-name"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#b28600;margin-right:8px"></span>DFRMMHKP</span><span class="consumer-metric">(n/a):1.9%</span></div></div>
+</div>
+<div class="axis-card" style="border-left:3px solid #6f6f6f">
+  <div class="axis-top">
+    <div>
+      <div class="axis-name">CPU Shape (STCs)</div>
+      <div class="axis-reading">Worst STC ratio graded &amp;middot; threshold 2% ratio</div>
+    </div>
+    <div><span style="display:inline-block;padding:2px 12px;border-radius:12px;font-size:12px;font-weight:600;letter-spacing:.02em;background:#e0e0e0;color:#393939">UNKNOWN</span></div>
+  </div>
+  <div class="axis-gauge"><svg width="400" height="28" style="display:block" role="img">
+  <title>value 0, threshold 2, grade UNKNOWN</title>
+  <rect x="0" y="6" width="400" height="16" rx="2" fill="#e0e0e0"/>
+  <rect x="0.5" y="6.5" width="1" height="15" rx="2"
+        fill="#8d8d8d" stroke="#6f6f6f" stroke-width="1"/>
+  <line x1="320" y1="2" x2="320" y2="26"
+        stroke="#161616" stroke-width="1.5" stroke-dasharray="3,2"/>
+</svg></div>
+  
+</div>
+<div class="axis-card" style="border-left:3px solid #6f6f6f">
+  <div class="axis-top">
+    <div>
+      <div class="axis-name">Memory / Paging</div>
+      <div class="axis-reading">0 page-ins/s  &amp;middot;  threshold 25 page-ins/s</div>
+    </div>
+    <div><span style="display:inline-block;padding:2px 12px;border-radius:12px;font-size:12px;font-weight:600;letter-spacing:.02em;background:#e0e0e0;color:#393939">UNKNOWN</span></div>
+  </div>
+  <div class="axis-gauge"><svg width="400" height="28" style="display:block" role="img">
+  <title>value 0, threshold 25, grade UNKNOWN</title>
+  <rect x="0" y="6" width="400" height="16" rx="2" fill="#e0e0e0"/>
+  <rect x="0.5" y="6.5" width="1" height="15" rx="2"
+        fill="#8d8d8d" stroke="#6f6f6f" stroke-width="1"/>
+  <line x1="320" y1="2" x2="320" y2="26"
+        stroke="#161616" stroke-width="1.5" stroke-dasharray="3,2"/>
+</svg></div>
+  
+</div>
+<div class="axis-card" style="border-left:3px solid #198038">
+  <div class="axis-top">
+    <div>
+      <div class="axis-name">Dataset I/O Hotspots</div>
+      <div class="axis-reading">0 opens/hr  &amp;middot;  threshold 500 opens/hr</div>
+    </div>
+    <div><span style="display:inline-block;padding:2px 12px;border-radius:12px;font-size:12px;font-weight:600;letter-spacing:.02em;background:#a7f0ba;color:#0e6027">GREEN</span></div>
+  </div>
+  <div class="axis-gauge"><svg width="400" height="28" style="display:block" role="img">
+  <title>value 0, threshold 500, grade GREEN</title>
+  <rect x="0" y="6" width="400" height="16" rx="2" fill="#e0e0e0"/>
+  <rect x="0.5" y="6.5" width="1" height="15" rx="2"
+        fill="#24a148" stroke="#198038" stroke-width="1"/>
+  <line x1="320" y1="2" x2="320" y2="26"
+        stroke="#161616" stroke-width="1.5" stroke-dasharray="3,2"/>
+</svg></div>
+  
+</div>
+  </div>
+
+  <div class="section">
+    <div class="section-hdr">
+      <span class="section-tag">Actions</span>
+      <span class="section-title">Prioritised Remediation</span>
+    </div>
+    <p class="no-findings">All axes GREEN &mdash; no actions required.</p>
+  </div>
+
+  <div class="footer">
+    Generated 2026-07-16 21:55 &middot; z/OS Health Check Workflow &middot; Made with IBM Bob
+  </div>
+
+</div>
+</body>
+</html>

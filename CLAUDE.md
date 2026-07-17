@@ -18,7 +18,7 @@ multiple sessions, one artifact at a time.
   to produce correct source, JCL, and documentation that the author takes
   to the mainframe to build and run.
 
-## Portfolio scope — 12 artifacts
+## Portfolio scope — 12 complete artifacts, plus artifact 14
 
 1. **Personal Macro Library** (`01-macro-library/`)
    Curated structured-programming and utility macros: `@ENTER`/`@LEAVE`,
@@ -107,6 +107,23 @@ multiple sessions, one artifact at a time.
     ZOS31 (RUNRPT30 JOB07111, STAGEVB JOB07206, RUNPYRPT JOB07278, all
     CC 0000).
 
+14. **z/OS Health Check Workflow** (`14-zos-health-check-workflow/`)
+    A 5-step z/OSMF workflow. Steps 1-4 are TSO-REXX collectors (SDSF
+    SP/ST spool; IFASMFDP SMF-30 subtype-5 CPU shape; ERBRMFPP paging;
+    IFASMFDP SMF-14/15 dataset opens) that each write their
+    VERDICT/TOP_CONSUMER lines (EBCDIC) to `/z/andre/hc_work/hc_<axis>.txt`.
+    Step 5 (shell-JCL) concatenates them, iconv EBCDIC->UTF-8, and runs
+    `generate_report.py` under IBM Open Enterprise Python to render a
+    self-contained, Carbon-styled HTML scorecard (inline SVG donut +
+    consumer pie, pure stdlib) directly into the USS work dir - so the
+    report exists the moment the workflow finishes. SMF field offsets
+    reuse artifact 12's pinned values (minus 4 for EXECIO's RDW strip).
+    Live-verified on ZOS32 2026-07-16 (all 5 steps Complete; real spool
+    data; report rendered on-host). Key gotchas captured in the
+    zos-health-check-workflow memory: IBM Python full path, the
+    iconv-tag trap, and shell-JCL SYSAFF/HASP112 from the wrong System
+    selection.
+
 ## Status
 
 | # | Artifact              | Status      |
@@ -123,6 +140,7 @@ multiple sessions, one artifact at a time.
 | 10 | z/OSMF Liberty Dump Workflow | Complete |
 | 11 | z/OSMF REST Workflow  | Complete    |
 | 12 | Python SMF Reader     | Complete    |
+| 14 | z/OS Health Check Workflow | Complete - live-verified on ZOS32 2026-07-16 (see note) |
 
 Status values: Not started / In progress / Complete.
 

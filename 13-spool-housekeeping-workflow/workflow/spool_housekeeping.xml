@@ -1,0 +1,414 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="workflow_v1.xsd">
+
+    <workflowInfo>
+        <workflowID>spool-housekeeping-monitor</workflowID>
+        <workflowDefaultName>Spool Housekeeping Monitor</workflowDefaultName>
+        <workflowDescription>Reports spool utilization, largest consumers by job and owner, and a verdict</workflowDescription>
+        <workflowVersion>1.0</workflowVersion>
+        <vendor>Andre</vendor>
+    </workflowInfo>
+
+    <variable name="SPOOL_HIGH_WATER" scope="instance" visibility="public">
+        <label>High Water Threshold</label>
+        <abstract>Percent used that should trigger urgent housekeeping</abstract>
+        <description>Numeric percentage. Overall spool utilization at or above this value produces an ABOVE THRESHOLD verdict.</description>
+        <category>Spool</category>
+        <string>
+            <default>80</default>
+        </string>
+    </variable>
+
+    <variable name="TOP_N" scope="instance" visibility="public">
+        <label>Top Job Count</label>
+        <abstract>How many largest spool consumers to report</abstract>
+        <description>Whole number. Controls how many jobs and how many owners are listed in the consumer report.</description>
+        <category>Spool</category>
+        <string>
+            <default>10</default>
+        </string>
+    </variable>
+
+    <step name="spoolUtilization">
+        <title>Report Spool Utilization</title>
+        <description>Reads the SDSF SP (spool volumes) panel through SDSF/REXX and reports per-volume and overall spool utilization, then judges it against the high water threshold.</description>
+        <variableValue name="SPOOL_HIGH_WATER" required="true"/>
+        <instructions substitution="true">
+            This step reports how full the spool actually is.
+            <br/><br/>
+            It reads the SDSF SP panel for every spool volume, totals the track
+            groups used against the track groups available, and prints the
+            overall utilization percentage. It then compares that percentage to
+            the ${instance-SPOOL_HIGH_WATER}% threshold and prints a verdict:
+            ABOVE THRESHOLD (housekeeping required, with a recommended order of
+            work) or BELOW THRESHOLD (monitor only).
+            <br/><br/>
+            The step fails if SDSF cannot supply the TGUSE column, which happens
+            when another SDSF panel has already been used in the same TSO
+            address space. If that occurs, run this step in a fresh TSO session.
+        </instructions>
+        <weight>3</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[/* REXX - Spool utilization from the SDSF SP panel.                  */
+/* ONE SDSF panel per TSO address space: this exec touches SP only.  */
+/* Using a second panel here would cut SDSF down to a 6-column set   */
+/* for the rest of the address space (TGUSE would disappear).        */
+SIGNAL ON NOVALUE NAME HANDLE_ERROR
+
+HIGHWM = '${instance-SPOOL_HIGH_WATER}'
+
+IF DATATYPE(HIGHWM,'N') = 0 THEN DO
+  SAY 'SPOOL_HIGH_WATER is not numeric:' HIGHWM
+  EXIT 12
+END
+
+X = ISFCALLS('ON')
+IF X <> 0 THEN DO
+  SAY 'ISFCALLS ON failed, RC=' X
+  EXIT 12
+END
+
+/* Stem defaults: SDSF leaves a variable UNSET for a row that has no */
+/* value for that field, so an unguarded reference would trap.       */
+DEVNAME. = ''
+STATUS.  = ''
+TGNUM.   = 0
+TGUSE.   = 0
+TGPCT.   = 0
+
+ADDRESS SDSF "ISFEXEC SP"
+IF RC <> 0 THEN DO
+  SAY 'ISFEXEC SP failed, RC=' RC
+  CALL BAIL 12
+END
+
+IF WORDPOS('TGUSE',ISFCOLS) = 0 THEN DO
+  SAY 'ERROR: SDSF returned a reduced column set (',
+      WORDS(ISFCOLS) 'columns); TGUSE is missing.'
+  SAY 'Cause: another SDSF panel was already used in this TSO address'
+  SAY 'space, which permanently reduces the column set. Run this step'
+  SAY 'in a fresh TSO session.'
+  CALL BAIL 8
+END
+
+SAY COPIES('=',72)
+SAY 'SPOOL UTILIZATION -' DATE('S') TIME()
+SAY COPIES('=',72)
+SAY LEFT('VOLUME',9) LEFT('STATUS',9) RIGHT('TG TOTAL',9),
+    RIGHT('TG USED',9) RIGHT('PCT',7)
+SAY COPIES('-',72)
+
+TOTTG = 0
+USETG = 0
+DO I = 1 TO DEVNAME.0
+  TOTTG = TOTTG + TGNUM.I
+  USETG = USETG + TGUSE.I
+  SAY LEFT(DEVNAME.I,9) LEFT(STATUS.I,9) RIGHT(TGNUM.I,9),
+      RIGHT(TGUSE.I,9) RIGHT(TGPCT.I,6)'%'
+END
+
+IF TOTTG = 0 THEN DO
+  SAY 'No spool volumes reported track groups - nothing to measure.'
+  CALL BAIL 8
+END
+
+PCT = FORMAT(USETG * 100 / TOTTG,,2)
+SAY COPIES('-',72)
+SAY 'Volumes:' DEVNAME.0 '   Track groups used:' USETG 'of' TOTTG
+SAY 'OVERALL SPOOL UTILIZATION:' PCT'%     Threshold:' HIGHWM'%'
+SAY COPIES('=',72)
+
+IF PCT >= HIGHWM THEN DO
+  SAY 'VERDICT: ABOVE THRESHOLD -' PCT'% >=' HIGHWM'%'
+  SAY 'Housekeeping is REQUIRED. Recommended order:'
+  SAY ' 1. Purge obsolete held output (QUEUE=PRINT) for the top owners.'
+  SAY ' 2. Confirm top jobs are not needed for audit or problem'
+  SAY '    determination before purging.'
+  SAY ' 3. If one job dominates, correct the application or stop the'
+  SAY '    workload - purging alone will not hold.'
+  SAY ' 4. Offload dumps and large reports, then purge the spool copy.'
+  SAY ' 5. Escalate to JES operations if pressure persists.'
+END
+ELSE DO
+  SAY 'VERDICT: BELOW THRESHOLD -' PCT'% <' HIGHWM'%'
+  SAY 'No urgent action. Trend the top owners from the next step.'
+END
+SAY COPIES('=',72)
+SAY 'SPOOL UTILIZATION COMPLETE'
+
+CALL BAIL 0
+
+BAIL:
+  X = ISFCALLS('OFF')
+  EXIT ARG(1)
+
+HANDLE_ERROR:
+  SAY 'REXX NOVALUE at line' SIGL 'variable:' CONDITION('D')
+  EXIT 12
+]]></inlineTemplate>
+            <submitAs>TSO-REXX</submitAs>
+            <successPattern>SPOOL UTILIZATION COMPLETE</successPattern>
+        </template>
+    </step>
+
+    <step name="topConsumers">
+        <title>Report Largest Spool Consumers</title>
+        <description>Reads the SDSF ST panel through SDSF/REXX and reports the largest jobs by track groups held, plus the same ranking aggregated by owner.</description>
+        <prereqStep name="spoolUtilization"/>
+        <variableValue name="TOP_N" required="true"/>
+        <instructions substitution="true">
+            This step reports who is actually holding the spool.
+            <br/><br/>
+            It reads the SDSF ST panel for every job on the spool and prints two
+            tables: the ${instance-TOP_N} largest jobs by track groups held
+            (with job ID, owner and queue), and the ${instance-TOP_N} largest
+            owners with their job counts and share of job-held spool.
+            <br/><br/>
+            SHARE% is each owner's share of the spool currently held by jobs, so
+            it is a different denominator from the overall utilization in the
+            previous step. The two are not meant to add up: overall utilization
+            also includes spool that is not held by jobs.
+            <br/><br/>
+            This step runs SDSF in its own TSO address space and deliberately
+            does not touch the SP panel. It fails if SDSF cannot supply the
+            OWNERID column, which happens when another SDSF panel has already
+            been used in the same TSO address space.
+        </instructions>
+        <weight>3</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true"><![CDATA[/* REXX - Largest spool consumers from the SDSF ST panel.            */
+/* ONE SDSF panel per TSO address space: this exec touches ST only.  */
+/* Adding an SP call here would cut SDSF down to a 6-column set and  */
+/* OWNERID / JOBID / QUEUE would come back empty.                    */
+/* Owner share is computed from TGNUM (track groups) against the     */
+/* spool held by all jobs. Do NOT sum the per-job TGPCT column to    */
+/* get it: TGPCT is rounded to 2dp, so the hundreds of small jobs    */
+/* each round to 0.00% and the total silently loses ~8 points.       */
+SIGNAL ON NOVALUE NAME HANDLE_ERROR
+
+TOPN = '${instance-TOP_N}'
+
+IF DATATYPE(TOPN,'W') = 0 THEN DO
+  SAY 'TOP_N is not a whole number:' TOPN
+  EXIT 12
+END
+IF TOPN < 1 THEN DO
+  SAY 'TOP_N must be 1 or more:' TOPN
+  EXIT 12
+END
+
+X = ISFCALLS('ON')
+IF X <> 0 THEN DO
+  SAY 'ISFCALLS ON failed, RC=' X
+  EXIT 12
+END
+
+ISFPREFIX = '*'
+ISFOWNER  = '*'
+
+/* Stem defaults: SDSF leaves a variable UNSET for a row that has no */
+/* value for that field (e.g. a job with no JOBID yet), so an        */
+/* unguarded reference would trap.                                   */
+JNAME.   = ''
+JOBID.   = ''
+OWNERID. = ''
+QUEUE.   = ''
+TGNUM.   = 0
+TGPCT.   = 0
+
+ADDRESS SDSF "ISFEXEC ST"
+IF RC <> 0 THEN DO
+  SAY 'ISFEXEC ST failed, RC=' RC
+  CALL BAIL 12
+END
+
+IF WORDPOS('OWNERID',ISFCOLS) = 0 THEN DO
+  SAY 'ERROR: SDSF returned a reduced column set (',
+      WORDS(ISFCOLS) 'columns); OWNERID is missing.'
+  SAY 'Cause: another SDSF panel was already used in this TSO address'
+  SAY 'space, which permanently reduces the column set. Run this step'
+  SAY 'in a fresh TSO session.'
+  CALL BAIL 8
+END
+
+N = JNAME.0
+SAY COPIES('=',72)
+SAY 'LARGEST SPOOL CONSUMERS -' DATE('S') TIME()
+SAY 'Jobs on spool:' N
+SAY COPIES('=',72)
+
+/* ---- top N jobs by track groups held ---------------------------- */
+SAY 'TOP' TOPN 'JOBS BY SPOOL USAGE'
+SAY COPIES('-',72)
+SAY LEFT('JOBNAME',9) LEFT('JOBID',9) LEFT('OWNER',9) LEFT('QUEUE',10),
+    RIGHT('TRK GRP',8) RIGHT('SPOOL%',7)
+SAY COPIES('-',72)
+
+USED. = 0
+DO K = 1 TO TOPN
+  BEST  = -1
+  BESTI = 0
+  DO I = 1 TO N
+    IF USED.I = 1 THEN ITERATE
+    IF TGNUM.I > BEST THEN DO
+      BEST  = TGNUM.I
+      BESTI = I
+    END
+  END
+  IF BESTI = 0 THEN LEAVE
+  USED.BESTI = 1
+  IF TGNUM.BESTI = 0 THEN LEAVE      /* rest hold no spool */
+  OWN = OWNERID.BESTI
+  IF OWN = '' THEN OWN = '(none)'
+  JID = JOBID.BESTI
+  IF JID = '' THEN JID = '(none)'
+  SAY LEFT(JNAME.BESTI,9) LEFT(JID,9) LEFT(OWN,9),
+      LEFT(QUEUE.BESTI,10) RIGHT(TGNUM.BESTI,8) RIGHT(TGPCT.BESTI,6)'%'
+END
+
+/* ---- aggregate by owner ----------------------------------------- */
+OWNTG.  = 0
+OWNJOB. = 0
+SEEN.   = 0
+OWNLIST = ''
+JOBTG   = 0
+DO I = 1 TO N
+  O = OWNERID.I
+  IF O = '' THEN O = '(none)'
+  IF SEEN.O = 0 THEN DO
+    SEEN.O  = 1
+    OWNLIST = OWNLIST O
+  END
+  OWNTG.O  = OWNTG.O  + TGNUM.I
+  OWNJOB.O = OWNJOB.O + 1
+  JOBTG    = JOBTG    + TGNUM.I
+END
+
+SAY ' '
+SAY 'TOP' TOPN 'OWNERS BY SPOOL USAGE   (distinct owners:',
+    WORDS(OWNLIST)')'
+SAY 'SHARE% = share of the spool currently held by jobs.'
+SAY COPIES('-',72)
+SAY LEFT('OWNER',9) RIGHT('JOBS',6) RIGHT('TRK GRP',9),
+    RIGHT('SHARE%',8)
+SAY COPIES('-',72)
+
+DONE. = 0
+DO K = 1 TO TOPN
+  BEST  = -1
+  BESTO = ''
+  DO J = 1 TO WORDS(OWNLIST)
+    O = WORD(OWNLIST,J)
+    IF DONE.O = 1 THEN ITERATE
+    IF OWNTG.O > BEST THEN DO
+      BEST  = OWNTG.O
+      BESTO = O
+    END
+  END
+  IF BESTO = '' THEN LEAVE
+  DONE.BESTO = 1
+  IF OWNTG.BESTO = 0 THEN LEAVE
+  SHARE = 0
+  IF JOBTG > 0 THEN SHARE = FORMAT(OWNTG.BESTO * 100 / JOBTG,,2)
+  SAY LEFT(BESTO,9) RIGHT(OWNJOB.BESTO,6) RIGHT(OWNTG.BESTO,9),
+      RIGHT(SHARE,7)'%'
+END
+
+SAY COPIES('-',72)
+SAY 'Track groups held by jobs:' JOBTG '(100% of SHARE% above)'
+SAY 'Overall spool utilization, including non-job use, is reported by'
+SAY 'the spool utilization step - these two steps use different'
+SAY 'denominators and are not meant to add up.'
+SAY COPIES('=',72)
+SAY 'CONSUMER REPORT COMPLETE'
+
+CALL BAIL 0
+
+BAIL:
+  X = ISFCALLS('OFF')
+  EXIT ARG(1)
+
+HANDLE_ERROR:
+  SAY 'REXX NOVALUE at line' SIGL 'variable:' CONDITION('D')
+  EXIT 12
+]]></inlineTemplate>
+            <submitAs>TSO-REXX</submitAs>
+            <successPattern>CONSUMER REPORT COMPLETE</successPattern>
+        </template>
+    </step>
+
+    <step name="reviewFindings">
+        <title>Review Utilization and Largest Owners</title>
+        <description>Guides the operator through interpreting the two reports before any spool is purged.</description>
+        <prereqStep name="topConsumers"/>
+        <instructions substitution="true">
+            Review the output of the two previous steps together.
+            <br/><br/>
+            Confirm these items:
+            <br/>- The overall utilization percentage, and whether it reached
+            the ${instance-SPOOL_HIGH_WATER}% threshold
+            <br/>- Whether any single volume is far more full than the others,
+            which points at a volume problem rather than a workload problem
+            <br/>- Which owners dominate the SHARE% column, and whether they are
+            known batch windows or unexpected workloads
+            <br/>- Whether the largest jobs sit in EXECUTION or PRINT: jobs in
+            EXECUTION are still running and cannot simply be purged
+            <br/><br/>
+            If the spool is under pressure, classify the largest consumers as:
+            <br/>- Long-running started tasks with excessive SYSOUT
+            <br/>- Held output not yet printed or purged
+            <br/>- Failed batch jobs generating large dumps or reports
+            <br/>- Repeating jobs creating duplicate output classes
+            <br/><br/>
+            Record the top contributors before purging anything, so growth can
+            be trended across runs.
+        </instructions>
+        <weight>2</weight>
+        <autoEnable>true</autoEnable>
+    </step>
+
+    <step name="housekeepingChecklist">
+        <title>Print Housekeeping Sign-Off Checklist</title>
+        <description>Prints a fixed operator sign-off checklist to work through after the reports have been reviewed. The checklist is the same every run; the data-driven verdict is in the utilization step.</description>
+        <prereqStep name="reviewFindings"/>
+        <instructions substitution="true">
+            Prints a standard sign-off checklist for the housekeeping action.
+            <br/><br/>
+            This checklist is fixed text and does not change with the measured
+            spool figures. The verdict and the recommended order of work come
+            from the utilization step; this step is the record of what was done.
+        </instructions>
+        <weight>2</weight>
+        <autoEnable>true</autoEnable>
+        <template>
+            <inlineTemplate substitution="true">#!/bin/sh
+echo "SPOOL HOUSEKEEPING SIGN-OFF CHECKLIST"
+echo "====================================="
+echo
+echo "Threshold configured : ${instance-SPOOL_HIGH_WATER}%"
+echo "Consumers listed     : ${instance-TOP_N}"
+echo
+echo "Before purging:"
+echo "- Top contributors recorded so growth can be trended across runs."
+echo "- Largest jobs checked for ACTIVE, OUTPUT or HELD state."
+echo "- Owners matched against known batch windows."
+echo "- Output confirmed as not needed for audit, print, or problem"
+echo "  determination."
+echo "- Dumps and large reports offloaded before their spool copy goes."
+echo
+echo "After purging:"
+echo "- Utilization step re-run to confirm the reclaim actually landed."
+echo "- Any job creating abnormal output growth raised with its owner,"
+echo "  since purging alone will not hold."
+echo "- JES operations engaged if pressure persists after cleanup."
+echo
+echo "CHECKLIST COMPLETE"</inlineTemplate>
+            <submitAs>shell-JCL</submitAs>
+            <maxLrecl>1024</maxLrecl>
+        </template>
+    </step>
+
+</workflow>
